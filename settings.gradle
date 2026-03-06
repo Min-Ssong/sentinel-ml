@@ -1,0 +1,6 @@
+rootProject.name = 'sentinel-ml'
+
+include 'common'
+include 'domain'
+include 'api'
+include 'ml-client'
