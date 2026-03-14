@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: sentinel-ml-api
+  profiles:
+    active: local
+
+server:
+  port: 8080

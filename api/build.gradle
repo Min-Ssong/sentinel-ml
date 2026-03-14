@@ -7,6 +7,5 @@ dependencies {
     implementation project(':domain')
     implementation project(':ml-client')
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
     implementation 'org.springframework.kafka:spring-kafka'
 }

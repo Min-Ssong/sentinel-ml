@@ -1,0 +1,27 @@
+<configuration>
+
+    <!-- prod: JSON 형태로 출력 -->
+    <springProfile name="prod">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>
+                    {"timestamp":"%d","level":"%level","txId":"%X{txId}","logger":"%logger","message":"%msg"}%n
+                </pattern>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <!-- local: 사람이 읽기 편한 텍스트 -->
+    <springProfile name="local">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d [%level] txId=%X{txId} %logger - %msg%n</pattern>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+</configuration>
