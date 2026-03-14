@@ -56,7 +56,7 @@
 ## 설계 결정 근거
 
 - `TRANSACTION_ID`: Auto Increment 대신 UUID 사용 — Kafka 메시지 키 및 MDC txId와 동일 값으로 분산 추적 연결
-- `IP_ADDRESS`: VARCHAR(45) — IPv6 최대 길이(39) + 여유
+- `IP_ADDRESS`: VARCHAR(45) — IPv4-mapped IPv6 표기 최대 길이(45자) 수용
 - `LOCATION`: 별도 테이블 정규화 없이 문자열 보관 — 포트폴리오 수준에서 조회 빈도 낮음
 - `ML_SCORE`: RULE_TRIGGERED가 있으면 ML 미호출이므로 NULL 허용
 - `IS_ACTIVE`: Champion 모델 교체 시 단일 행만 TRUE로 관리
