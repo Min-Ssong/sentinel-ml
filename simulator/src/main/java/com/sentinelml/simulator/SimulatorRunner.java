@@ -44,7 +44,9 @@ public class SimulatorRunner implements CommandLineRunner {
 
         while (true) {
             boolean isFraud = random.nextDouble() < properties.fraudRatio();
-            TransactionMessage message = isFraud ? buildFraudTransaction() : buildNormalTransaction();
+            TransactionMessage message = isFraud
+                    ? buildFraudTransaction()
+                    : buildNormalTransaction();
             producer.send(message);
             Thread.sleep(intervalMs);
         }
@@ -64,16 +66,58 @@ public class SimulatorRunner implements CommandLineRunner {
         );
     }
 
+    // 패턴 선택기
     private TransactionMessage buildFraudTransaction() {
-        // 일단 정상과 동일하게 생성, 다음 단계에서 이상 패턴 3가지로 분리
+        int pattern = random.nextInt(3);
+        return switch (pattern) {
+            case 0 -> buildHighFrequencyFraud();
+            case 1 -> buildHighAmountFraud();
+            default -> buildLocationMismatchFraud();
+        };
+    }
+
+    // 패턴 1: 단시간 고빈도 — 동일 userId로 짧은 간격 반복
+    private TransactionMessage buildHighFrequencyFraud() {
+        String fixedUser = "user-001";  // 동일 userId 고정
+        return new TransactionMessage(
+                UUID.randomUUID().toString(),
+                fixedUser,
+                BigDecimal.valueOf(10000 + random.nextInt(50000)),
+                CATEGORIES.get(random.nextInt(CATEGORIES.size())),
+                "device-" + random.nextInt(3),
+                "192.168.1." + random.nextInt(255),
+                "KR",
+                LocalDateTime.now(),
+                true
+        );
+    }
+
+    // 패턴 2: 비정상 고액 — 정상 거래 상한(50만)의 10배 이상
+    private TransactionMessage buildHighAmountFraud() {
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
                 USER_IDS.get(random.nextInt(USER_IDS.size())),
-                BigDecimal.valueOf(5000000 + random.nextInt(5000000)),  // 500만 ~ 1000만 (비정상 고액)
+                BigDecimal.valueOf(5000000 + random.nextInt(5000000)),  // 500만~1000만
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
                 "192.168.1." + random.nextInt(255),
-                COUNTRIES.get(random.nextInt(COUNTRIES.size())),
+                "KR",
+                LocalDateTime.now(),
+                true
+        );
+    }
+
+    // 패턴 3: 이상 위치 — KR에서 방금 결제했는데 해외 국가에서 결제
+    private TransactionMessage buildLocationMismatchFraud() {
+        List<String> foreignCountries = List.of("US", "JP", "CN", "RU");
+        return new TransactionMessage(
+                UUID.randomUUID().toString(),
+                USER_IDS.get(random.nextInt(USER_IDS.size())),
+                BigDecimal.valueOf(100000 + random.nextInt(400000)),
+                CATEGORIES.get(random.nextInt(CATEGORIES.size())),
+                "device-" + random.nextInt(10),
+                "192.168." + random.nextInt(255) + "." + random.nextInt(255),
+                foreignCountries.get(random.nextInt(foreignCountries.size())),
                 LocalDateTime.now(),
                 true
         );
