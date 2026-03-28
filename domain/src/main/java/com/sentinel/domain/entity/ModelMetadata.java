@@ -1,14 +1,17 @@
 package com.sentinel.domain.entity;
 
 import jakarta.persistence.*;
-        import org.springframework.data.annotation.CreatedDate;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "model_metadata")
 @EntityListeners(AuditingEntityListener.class)
+@Getter
+@Setter
 public class ModelMetadata {
 
     @Id
@@ -23,9 +26,6 @@ public class ModelMetadata {
 
     @Column(nullable = false, length = 36)
     private String mlflowRunId;
-
-    @Column(nullable = false)
-    private boolean isActive;
 
     @Column(name = "is_active", nullable = false)
     private boolean active;

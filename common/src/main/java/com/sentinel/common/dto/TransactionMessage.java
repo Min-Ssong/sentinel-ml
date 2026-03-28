@@ -1,4 +1,4 @@
-package com.sentinelml.simulator.dto;
+package com.sentinel.common.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -12,5 +12,5 @@ public record TransactionMessage(
         String ipAddress,
         String country,
         LocalDateTime timestamp,
-        boolean isFraud          // 시뮬레이터 전용 필드, 검증용
+        boolean isFraud
 ) {}

@@ -1,7 +1,7 @@
 package com.sentinelml.simulator.producer;
 
-import com.sentinelml.simulator.dto.TransactionMessage;
 import org.springframework.kafka.core.KafkaTemplate;
+import com.sentinel.common.dto.TransactionMessage;
 import org.springframework.stereotype.Component;
 
 @Component

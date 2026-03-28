@@ -1,8 +1,8 @@
 package com.sentinelml.simulator;
 
 import com.sentinelml.simulator.config.SimulatorProperties;
-import com.sentinelml.simulator.dto.TransactionMessage;
 import com.sentinelml.simulator.producer.TransactionProducer;
+import com.sentinel.common.dto.TransactionMessage;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 

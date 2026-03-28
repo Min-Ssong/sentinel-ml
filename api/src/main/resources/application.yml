@@ -28,6 +28,8 @@ spring:
       auto-offset-reset: earliest
       properties:
         spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.sentinel.common.dto.TransactionMessage
 
 server:
   port: 8080

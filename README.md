@@ -1,119 +1,236 @@
 # Sentinel-ML
-실시간 금융 사기 탐지 시스템
+
+실시간 금융 사기 탐지 시스템 (Financial Detection System)
+
+![Java](https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4.0-6DB33F?style=flat-square&logo=springboot)
+![Kafka](https://img.shields.io/badge/Apache_Kafka-3.8-231F20?style=flat-square&logo=apachekafka)
+![Redis](https://img.shields.io/badge/Redis-7.2-DC382D?style=flat-square&logo=redis)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?style=flat-square&logo=postgresql)
+
 ---
+
+## 프로젝트 개요
+
+카드 도용, 비정상 고액 결제, 물리적으로 불가능한 위치 이동 등 이상 거래 패턴을 실시간으로 탐지하는 시스템입니다. Rule Engine 1차 필터 → ML 모델 추론 → 결과 저장의 파이프라인으로 동작합니다.
+
+**포트폴리오 핵심 차별점**
+- Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
+- Circuit Breaker + DLQ + Fallback — 장애 상황에서도 100ms SLA 유지
+- MLOps 자동화 사이클 — 드리프트 감지 → 자동 재학습 → Shadow Deployment
+
+---
+
 ## 기술 스택
+
 | 영역 | 기술 |
 |---|---|
 | Backend | Java 17, Spring Boot 3.4.0 |
-| Streaming | Apache Kafka |
-| Cache | Redis |
-| ML | Python 3.11, FastAPI, XGBoost |
-| MLOps | MLflow, Apache Airflow |
+| Streaming | Apache Kafka, Spring Kafka |
+| Cache | Redis (Sorted Set, Sliding Window) |
+| ML | Python 3.11, FastAPI, XGBoost / LightGBM |
+| MLOps | MLflow 2.9.2, Apache Airflow |
+| 장애 내성 | Resilience4j (Circuit Breaker, Retry) |
+| 모니터링 | Prometheus, Grafana |
 | Infra | Docker Compose |
-| DB | PostgreSQL |
+| DB | PostgreSQL 15 |
 | Test | JUnit 5, Mockito, k6 |
+
 ---
+
 ## 프로젝트 구조
+
 ```
 sentinel-ml/
-├── common/           # 공통 유틸, 예외, 응답 포맷
-├── domain/           # JPA Entity, Repository
+├── common/               # 공통 DTO, 유틸
+│   └── dto/
+│       └── TransactionMessage.java   # Kafka 메시지 계약 (Producer/Consumer 공유)
+├── domain/               # JPA Entity, Repository, 도메인 인터페이스
 │   └── src/main/java/com/sentinel/domain/
-│       └── entity/
-│           ├── Transaction.java        # 거래 원본 데이터
-│           ├── FraudResult.java        # 사기 탐지 판단 결과
-│           └── ModelMetadata.java      # ML 모델 배포 이력
-├── api/              # REST Controller, Kafka Consumer/Producer
+│       ├── entity/
+│       │   ├── Transaction.java        # 거래 원본 데이터
+│       │   ├── FraudResult.java        # 사기 탐지 판단 결과 (N:1)
+│       │   └── ModelMetadata.java      # ML 모델 배포 이력
+│       ├── repository/
+│       │   └── TransactionRepository.java
+│       └── rule/
+│           ├── RuleEvaluator.java      # Rule Engine 인터페이스 (4월 구현 예정)
+│           └── FraudScoreResult.java   # Rule 평가 결과 DTO
+├── api/                  # Kafka Consumer, Service, REST Controller
 │   └── src/main/
 │       ├── java/com/sentinel/api/
+│       │   ├── consumer/
+│       │   │   └── TransactionConsumer.java  # Kafka 메시지 수신 → DB 저장
+│       │   ├── service/
+│       │   │   └── TransactionService.java
+│       │   ├── config/
+│       │   │   └── JpaConfig.java            # 멀티모듈 JPA Repository 스캔
 │       │   └── filter/
-│       │       └── MDCFilter.java      # Transaction ID MDC 등록/해제
+│       │       └── MDCFilter.java            # Transaction ID MDC 등록/해제
 │       └── resources/
-│           ├── logback-spring.xml      # 환경별 JSON/텍스트 로그 설정
+│           ├── logback-spring.xml            # 환경별 JSON/텍스트 로그 설정
 │           ├── application.yml
 │           └── application-local.yml
-├── ml-client/        # FastAPI 추론 서버 WebClient
+├── ml-client/            # FastAPI 추론 서버 WebClient (5월 구현 예정)
+├── simulator/            # 트랜잭션 시뮬레이터 (개발/테스트 전용)
+│   └── src/main/java/com/sentinelml/simulator/
+│       ├── SimulatorRunner.java       # CommandLineRunner 기반 produce 루프
+│       ├── producer/
+│       │   └── TransactionProducer.java
+│       └── config/
+│           └── SimulatorProperties.java  # --rate, --fraud-ratio 파라미터
 ├── docs/
-│   ├── erd.md                          # PostgreSQL ERD 설계 문서
-│   ├── kafka-topic-design.md           # Kafka 토픽 설계 문서
+│   ├── erd.md                         # PostgreSQL ERD 설계 문서
+│   ├── kafka-topic-design.md          # Kafka 토픽 설계 문서
 │   └── sql/
-│       └── schema.sql                  # PostgreSQL DDL
+│       └── schema.sql                 # PostgreSQL DDL
 ├── infra/
 │   └── docker/
 │       ├── docker-compose.yml
 │       ├── Dockerfile.mlflow
-│       └── .env      # git 제외
-└── .env.example      # 환경변수 템플릿
+│       └── .env                       # git 제외
+└── .env.example                       # 환경변수 템플릿
 ```
+
 ---
+
 ## 실행 방법
+
 ### 사전 조건
+
 - Docker Desktop 설치
 - `.env` 파일 생성 (`.env.example` 참고)
+
 ```bash
 # .env 파일 생성
 cp .env.example infra/docker/.env
 # 값 직접 입력 후 저장
 ```
-### 환경 실행
+
+### 인프라 실행
+
 ```bash
 cd infra/docker
 docker compose up -d
 ```
-### 서비스 확인
+
+### Kafka 토픽 생성
+
+```bash
+docker exec -it sentinel-kafka kafka-topics --create --topic transactions --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+docker exec -it sentinel-kafka kafka-topics --create --topic fraud-alerts --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+docker exec -it sentinel-kafka kafka-topics --create --topic dlq --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+```
+
+### 서비스 주소
+
 | 서비스 | 주소 |
 |---|---|
 | MLflow UI | http://localhost:5000 |
 | Kafka | localhost:9092 |
 | PostgreSQL | localhost:5432 |
 | Redis | localhost:6379 |
+
 ### 빌드
+
 ```bash
 ./gradlew build
 ```
+
+### 시뮬레이터 실행
+
+```bash
+# 환경변수 설정 (PowerShell)
+$env:POSTGRES_USER="sentinel"
+$env:POSTGRES_PASSWORD="your_password"
+
+# 초당 10건, 이상 거래 비율 20%
+./gradlew :simulator:bootRun --args='--simulator.rate=10 --simulator.fraud-ratio=0.2'
+```
+
+### API 서버 실행
+
+```bash
+./gradlew :api:bootRun
+```
+
 ---
+
 ## 설계 결정 기록
+
 ### MDC 기반 분산 추적 로깅
+
 모든 로그에 `txId` 필드를 포함해 하나의 거래 흐름을 처음부터 끝까지 추적할 수 있도록 설계했습니다.
+
 - `X-Transaction-ID` 헤더가 있으면 해당 값 사용, 없으면 UUID 신규 생성
+- Kafka Consumer에서 메시지 수신 시 `transactionId`를 MDC에 등록
 - `finally { MDC.clear() }` 로 스레드 반납 전 반드시 초기화 (스레드 풀 오염 방지)
 - `logback-spring.xml` 사용으로 `local` / `prod` 환경별 로그 포맷 분리
+
 ```
 # 로그 출력 예시 (local)
-[INFO] txId=a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx c.s.a.filter.MDCFilter - Request incoming - method=GET uri=/api/transactions
+[INFO] txId=a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx c.s.a.consumer.TransactionConsumer - Transaction received | userId=user-001 | amount=262449
 ```
 
 ### ERD 설계 핵심 결정
+
 - `TRANSACTION_ID`: Auto Increment 대신 UUID — Kafka 메시지 키 및 MDC txId와 동일 값으로 분산 추적 연결
 - `FRAUD_RESULTS → TRANSACTIONS`: N:1 관계 — Shadow Deployment에서 Champion/Challenger 두 모델이 동일 거래에 각각 판단을 내리므로 거래 1건에 판단 결과 2건 생성 가능
 - `AMOUNT`: DECIMAL(15,2) — Double 부동소수점 오차 방지, 금융 정밀도 필수
 - `IP_ADDRESS`: VARCHAR(45) — IPv4-mapped IPv6 최대 길이(45자) 수용
 
 ### Kafka 토픽 설계 핵심 결정
+
 - 파티션 키 `user_id`: 동일 사용자 거래를 같은 파티션으로 라우팅 — 고빈도 패턴 탐지 정확도 확보
 - `dlq` 파티션 1개: 실패 메시지 순서 보장 및 장애 복구 후 재처리를 위한 원본 메시지 보존
 
+### 트랜잭션 시뮬레이터 이상 패턴
+
+| 패턴 | 구현 방식 | 탐지 목적 |
+|---|---|---|
+| 단시간 고빈도 | 동일 userId 고정으로 짧은 간격 반복 | 카드 도용 후 연속 결제 |
+| 비정상 고액 | 정상 상한(50만)의 10배 이상 | 비정상 단건 거래 |
+| 이상 위치 | country를 해외(US, JP, CN, RU)로 설정 | 물리적 이동 불가 위치 변화 |
+
 ---
+
 ## 설계 문서
+
 - [ERD 설계](docs/erd.md)
 - [Kafka 토픽 설계](docs/kafka-topic-design.md)
 - [PostgreSQL DDL](docs/sql/schema.sql)
 
 ---
+
 ## 진행 현황
+
 ### ✅ 3월 1주차 (3/6 ~ 3/7)
 - Docker Compose 환경 구축 (5개 서비스 정상 기동)
 - Spring Boot 멀티모듈 구조 생성 및 빌드 성공
+
 ### ✅ 3월 2주차 (3/10 ~ 3/14)
 - `logback-spring.xml` 작성 — 환경별 로그 포맷 분리 (local: 텍스트 / prod: JSON)
 - `MDCFilter` 구현 — 요청별 Transaction ID 생성 및 MDC 등록/해제
 - `build.gradle` 의존성 정리 — 모듈별 책임 분리, 불필요한 의존성 제거
 - JUnit 5 테스트 환경 세팅 및 샘플 단위 테스트 작성/통과
+
 ### ✅ 3월 3주차 (3/15 ~ 3/21)
 - PostgreSQL ERD 확정 — 테이블 3개 설계 및 `docs/erd.md` 작성
 - JPA Entity 코드 작성 — `Transaction`, `FraudResult`, `ModelMetadata`
 - `docs/sql/schema.sql` DDL 작성 및 PostgreSQL 테이블 생성 완료
 - `application.yml` JPA(`ddl-auto: validate`) + Kafka 설정 추가
 - Kafka 토픽 설계 문서 작성 — `transactions` / `fraud-alerts` / `dlq`
-### 🔜 3월 4주차 (3/22 ~ 3/28)
-- 트랜잭션 시뮬레이터 구현 — 정상/이상 거래 produce 및 DB 적재 검증
+
+### ✅ 3월 4주차 (3/22 ~ 3/28)
+- `simulator` 모듈 생성 — `CommandLineRunner` 기반 Kafka Producer 구현
+- 이상 거래 패턴 3가지 구현 (단시간 고빈도 / 비정상 고액 / 이상 위치)
+- `TransactionMessage` → `common` 모듈 이동 (멀티모듈 의존성 구조 개선)
+- Kafka Consumer → PostgreSQL 적재 파이프라인 구현 완료
+- `RuleEvaluator`, `FraudScoreResult`, `FraudDetectionResult` 인터페이스 스케치
+- **체크포인트 달성: 시뮬레이터 → Kafka → Consumer → PostgreSQL end-to-end 흐름 확인**
+
+### 🔜 4월 (예정)
+- Kafka Consumer DLQ 연결 및 Dead Letter Queue 파이프라인
+- Redis 캐싱 레이어 (Sorted Set 기반 거래 이력 관리)
+- Rule Engine 구현 (규칙 기반 1차 필터, 10ms 이내 처리 목표)
+- Resilience4j Circuit Breaker + Fallback 적용

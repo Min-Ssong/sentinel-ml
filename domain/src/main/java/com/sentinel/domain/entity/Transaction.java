@@ -1,6 +1,8 @@
 package com.sentinel.domain.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -10,6 +12,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "transactions")
 @EntityListeners(AuditingEntityListener.class)
+@Getter
+@Setter
 public class Transaction {
 
     @Id
@@ -31,8 +35,8 @@ public class Transaction {
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
 
-    @Column(name = "location", length = 100)
-    private String location;
+    @Column(name = "country", length = 10)
+    private String country;
 
     @Column(name = "timestamp", nullable = false)
     private LocalDateTime timestamp;
