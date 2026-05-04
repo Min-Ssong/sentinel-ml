@@ -28,7 +28,10 @@ public class TransactionConsumer {
 
             Transaction transaction = toEntity(message);
             transactionService.save(transaction);
-
+        } catch (Exception e) {
+            log.error("Transaction processing failed | txId={} | error={}",
+                    message.transactionId(), e.getMessage());
+            throw e;
         } finally {
             MDC.clear();
         }
