@@ -6,6 +6,9 @@ import com.sentinel.domain.rule.FraudScoreResult;
 import com.sentinel.domain.rule.RuleEvaluator;
 import com.sentinel.api.service.TransactionService;
 import com.sentinel.api.service.RedisService;
+import com.sentinel.mlclient.MlScoreClient;
+import com.sentinel.mlclient.dto.MlScoreRequest;
+import com.sentinel.mlclient.dto.MlScoreResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -16,16 +19,22 @@ import org.springframework.stereotype.Component;
 public class TransactionConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionConsumer.class);
+    private static final double BLOCK_THRESHOLD = 0.8;
+    private static final double REVIEW_THRESHOLD = 0.5;
+
     private final TransactionService transactionService;
     private final RedisService redisService;
     private final RuleEvaluator ruleEvaluator;
+    private final MlScoreClient mlScoreClient;
 
     public TransactionConsumer(TransactionService transactionService,
                                RedisService redisService,
-                               RuleEvaluator ruleEvaluator) {
+                               RuleEvaluator ruleEvaluator,
+                               MlScoreClient mlScoreClient) {
         this.transactionService = transactionService;
         this.redisService = redisService;
         this.ruleEvaluator = ruleEvaluator;
+        this.mlScoreClient = mlScoreClient;
     }
 
     @KafkaListener(topics = "transactions", groupId = "sentinel-group")
@@ -50,12 +59,45 @@ public class TransactionConsumer {
                     message.ipAddress()
             );
 
+            String status;
+
             if (ruleResult.blocked()) {
+                // Rule Engine 차단 → ML 호출 불필요
+                status = "BLOCKED";
                 log.info("Transaction blocked by rule | txId={} | rule={} | reason={}",
                         message.transactionId(), ruleResult.triggeredRule(), ruleResult.reason());
+            } else {
+                // Rule Engine 통과 → ML 서버 호출
+                MlScoreRequest mlRequest = new MlScoreRequest(
+                        message.transactionId(),
+                        message.userId(),
+                        message.amount(),
+                        message.country(),
+                        message.merchantCategory(),
+                        message.deviceId(),
+                        message.ipAddress()
+                );
+
+                MlScoreResponse mlResponse = mlScoreClient.score(mlRequest);
+
+                if (mlResponse.score() < 0) {
+                    // Fallback 발생 (ML 서버 다운)
+                    status = "PENDING";
+                    log.warn("ML fallback applied | txId={} | status=PENDING",
+                            message.transactionId());
+                } else if (mlResponse.score() >= BLOCK_THRESHOLD) {
+                    status = "BLOCKED";
+                } else if (mlResponse.score() >= REVIEW_THRESHOLD) {
+                    status = "REVIEW";
+                } else {
+                    status = "APPROVED";
+                }
+
+                log.info("ML score applied | txId={} | score={} | status={}",
+                        message.transactionId(), mlResponse.score(), status);
             }
 
-            Transaction transaction = toEntity(message, ruleResult);
+            Transaction transaction = toEntity(message, status);
             transactionService.save(transaction);
 
         } catch (Exception e) {
@@ -67,7 +109,7 @@ public class TransactionConsumer {
         }
     }
 
-    private Transaction toEntity(TransactionMessage message, FraudScoreResult ruleResult) {
+    private Transaction toEntity(TransactionMessage message, String status) {
         Transaction transaction = new Transaction();
         transaction.setTransactionId(message.transactionId());
         transaction.setUserId(message.userId());
@@ -77,7 +119,7 @@ public class TransactionConsumer {
         transaction.setIpAddress(message.ipAddress());
         transaction.setCountry(message.country());
         transaction.setTimestamp(message.timestamp());
-        transaction.setStatus(ruleResult.blocked() ? "BLOCKED" : "PENDING");
+        transaction.setStatus(status);
         return transaction;
     }
 }

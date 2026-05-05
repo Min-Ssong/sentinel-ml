@@ -33,3 +33,12 @@ spring:
 
 server:
   port: 8080
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      mlScoreClient:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
