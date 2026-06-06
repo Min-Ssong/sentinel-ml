@@ -1,0 +1,10 @@
+setuptools<82
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+imbalanced-learn
+mlflow==2.9.2
+matplotlib
+seaborn

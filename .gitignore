@@ -28,6 +28,8 @@ replay_pid*
 infra/docker/.env
 postgres_data/
 mlflow_artifacts/
+ml/.venv
+ml/data
 
 # Gradle
 .gradle/
