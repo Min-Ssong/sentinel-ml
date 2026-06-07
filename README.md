@@ -192,6 +192,20 @@ $env:POSTGRES_PASSWORD="your_password"
 | 비정상 고액 | 정상 상한(50만)의 10배 이상 | 비정상 단건 거래 |
 | 이상 위치 | country를 해외(US, JP, CN, RU)로 설정 | 물리적 이동 불가 위치 변화 |
 
+### ML 베이스라인 — 불균형 데이터 전략
+
+**클래스 불균형 (정상:사기 ≈ 578:1)**
+
+사기가 전체의 0.17%에 불과해, 모델이 모든 거래를 "정상"으로 찍어도 정확도(accuracy)가 99.8%로 나옵니다. 따라서 accuracy는 평가 지표로 무의미하며, Precision / Recall / F1 / ROC-AUC로 평가합니다. 사기 탐지에서는 놓친 사기(False Negative)를 줄이는 **Recall**이 특히 중요합니다.
+
+불균형 보정은 XGBoost의 `scale_pos_weight = 정상 수 / 사기 수 ≈ 577`로 사기 클래스에 가중치를 부여하는 방식을 택했습니다. SMOTE 오버샘플링 대신 가중치 방식을 쓴 이유는 간단하고 XGBoost가 네이티브로 지원하기 때문입니다.
+
+- 결과: ROC-AUC 0.98, 사기 Recall 0.87 (98건 중 85건 탐지)
+- Precision 0.33은 trade-off입니다 — 가중치를 최대로 줘 Recall을 끌어올린 대가이며, 임계값·가중치 튜닝으로 조정 가능한 베이스라인 수준입니다
+
+**Data Leakage 방지 스케일링**
+
+`StandardScaler`를 train 데이터에만 `fit`하고 test에는 `transform`만 적용합니다. test 정보가 전처리 단계에 새어들면 평가 점수가 거짓으로 부풀려지기 때문입니다. V1~V28은 이미 PCA로 스케일된 피처라, 원본 값인 `Amount`·`Time`만 스케일링합니다.
 ---
 
 ## 설계 문서
@@ -204,33 +218,24 @@ $env:POSTGRES_PASSWORD="your_password"
 
 ## 진행 현황
 
-### ✅ 3월 1주차 (3/6 ~ 3/7)
-- Docker Compose 환경 구축 (5개 서비스 정상 기동)
-- Spring Boot 멀티모듈 구조 생성 및 빌드 성공
+### ✅ 3월 — 기반 설계 및 환경 구축
+- Docker Compose 5개 서비스(Kafka, Zookeeper, Redis, PostgreSQL, MLflow) 구축
+- Spring Boot 멀티모듈 구조 + MDC 기반 분산 추적 로깅(`logback-spring.xml`, `MDCFilter`)
+- PostgreSQL ERD 3테이블 + Kafka 토픽 3개 설계
+- 트랜잭션 시뮬레이터 → Kafka → Consumer → PostgreSQL E2E 파이프라인 검증
 
-### ✅ 3월 2주차 (3/10 ~ 3/14)
-- `logback-spring.xml` 작성 — 환경별 로그 포맷 분리 (local: 텍스트 / prod: JSON)
-- `MDCFilter` 구현 — 요청별 Transaction ID 생성 및 MDC 등록/해제
-- `build.gradle` 의존성 정리 — 모듈별 책임 분리, 불필요한 의존성 제거
-- JUnit 5 테스트 환경 세팅 및 샘플 단위 테스트 작성/통과
+### ✅ 4월 — 백엔드 코어 구현
+- Kafka Consumer 처리 실패 시 DLQ 자동 라우팅
+- Redis 캐싱 레이어 — Sorted Set 거래 이력, Sliding Window Counter
+- Rule Engine — 규칙 기반 1차 필터 (10ms 이내 처리 목표)
+- Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
 
-### ✅ 3월 3주차 (3/15 ~ 3/21)
-- PostgreSQL ERD 확정 — 테이블 3개 설계 및 `docs/erd.md` 작성
-- JPA Entity 코드 작성 — `Transaction`, `FraudResult`, `ModelMetadata`
-- `docs/sql/schema.sql` DDL 작성 및 PostgreSQL 테이블 생성 완료
-- `application.yml` JPA(`ddl-auto: validate`) + Kafka 설정 추가
-- Kafka 토픽 설계 문서 작성 — `transactions` / `fraud-alerts` / `dlq`
+### 🔄 6월 1주차 — ML 베이스라인 (진행 중)
+- Credit Card Fraud 데이터셋 (284,807건, 정상:사기 ≈ 578:1)
+- XGBoost 베이스라인 학습 — ROC-AUC 0.98, 사기 Recall 0.87
+- MLflow 실험 기록 (parameters / metrics)
 
-### ✅ 3월 4주차 (3/22 ~ 3/28)
-- `simulator` 모듈 생성 — `CommandLineRunner` 기반 Kafka Producer 구현
-- 이상 거래 패턴 3가지 구현 (단시간 고빈도 / 비정상 고액 / 이상 위치)
-- `TransactionMessage` → `common` 모듈 이동 (멀티모듈 의존성 구조 개선)
-- Kafka Consumer → PostgreSQL 적재 파이프라인 구현 완료
-- `RuleEvaluator`, `FraudScoreResult`, `FraudDetectionResult` 인터페이스 스케치
-- **체크포인트 달성: 시뮬레이터 → Kafka → Consumer → PostgreSQL end-to-end 흐름 확인**
-
-### 🔜 4월 (예정)
-- Kafka Consumer DLQ 연결 및 Dead Letter Queue 파이프라인
-- Redis 캐싱 레이어 (Sorted Set 기반 거래 이력 관리)
-- Rule Engine 구현 (규칙 기반 1차 필터, 10ms 이내 처리 목표)
-- Resilience4j Circuit Breaker + Fallback 적용
+### 🔜 예정
+- FastAPI 추론 서버 + Java WebClient 연동 (타임아웃/Fallback)
+- MLOps — Airflow 재학습, Drift 모니터링, Shadow Deployment
+- k6 부하 테스트 — P95 < 100ms 검증
