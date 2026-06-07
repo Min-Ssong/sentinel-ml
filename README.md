@@ -43,37 +43,59 @@
 ```
 sentinel-ml/
 ├── common/               # 공통 DTO, 유틸
-│   └── dto/
-│       └── TransactionMessage.java   # Kafka 메시지 계약 (Producer/Consumer 공유)
+│   └── src/main/java/com/sentinel/common/
+│       ├── dto/
+│       │   └── TransactionMessage.java       # Kafka 메시지 계약 (Producer/Consumer 공유)
+│       └── util/
+│           └── TransactionIdGenerator.java   # UUID 기반 Transaction ID 생성
 ├── domain/               # JPA Entity, Repository, 도메인 인터페이스
 │   └── src/main/java/com/sentinel/domain/
 │       ├── entity/
 │       │   ├── Transaction.java        # 거래 원본 데이터
-│       │   ├── FraudResult.java        # 사기 탐지 판단 결과 (N:1)
+│       │   ├── FraudResults.java       # 사기 탐지 판단 결과 (N:1)
 │       │   └── ModelMetadata.java      # ML 모델 배포 이력
+│       ├── model/
+│       │   └── FraudDetectionResult.java  # 최종 탐지 결과 도메인 모델
 │       ├── repository/
 │       │   └── TransactionRepository.java
 │       └── rule/
-│           ├── RuleEvaluator.java      # Rule Engine 인터페이스 (4월 구현 예정)
-│           └── FraudScoreResult.java   # Rule 평가 결과 DTO
+│           ├── RuleEvaluator.java         # Rule Engine 인터페이스
+│           ├── RedisRuleEvaluator.java    # Redis 기반 규칙 평가 구현체
+│           └── FraudScoreResult.java      # Rule 평가 결과 DTO
 ├── api/                  # Kafka Consumer, Service, REST Controller
 │   └── src/main/
 │       ├── java/com/sentinel/api/
+│       │   ├── SentinelApplication.java          # Spring Boot 진입점
 │       │   ├── consumer/
-│       │   │   └── TransactionConsumer.java  # Kafka 메시지 수신 → DB 저장
+│       │   │   └── TransactionConsumer.java      # Kafka 메시지 수신 → DB 저장
 │       │   ├── service/
-│       │   │   └── TransactionService.java
+│       │   │   ├── TransactionService.java
+│       │   │   └── RedisService.java              # Redis Sorted Set / Sliding Window
 │       │   ├── config/
-│       │   │   └── JpaConfig.java            # 멀티모듈 JPA Repository 스캔
+│       │   │   ├── JpaConfig.java                 # 멀티모듈 JPA Repository 스캔
+│       │   │   ├── KafkaConfig.java               # Kafka Consumer / DLQ 설정
+│       │   │   └── RedisConfig.java               # RedisTemplate Bean 설정
 │       │   └── filter/
-│       │       └── MDCFilter.java            # Transaction ID MDC 등록/해제
+│       │       └── MDCFilter.java                 # Transaction ID MDC 등록/해제
 │       └── resources/
-│           ├── logback-spring.xml            # 환경별 JSON/텍스트 로그 설정
+│           ├── logback-spring.xml                 # 환경별 JSON/텍스트 로그 설정
 │           ├── application.yml
 │           └── application-local.yml
-├── ml-client/            # FastAPI 추론 서버 WebClient (5월 구현 예정)
+├── ml-client/            # FastAPI 추론 서버 WebClient + Circuit Breaker
+│   └── src/main/java/com/sentinel/mlclient/
+│       ├── MlScoreClient.java                     # WebClient + Resilience4j Circuit Breaker
+│       └── dto/
+│           ├── MlScoreRequest.java
+│           └── MlScoreResponse.java
+├── ml/                   # Python ML 파이프라인
+│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록
+│   ├── explore.py        # 데이터 탐색 (EDA)
+│   ├── requirements.txt
+│   └── data/
+│       └── creditcard.csv  # Credit Card Fraud 데이터셋 (git 제외)
 ├── simulator/            # 트랜잭션 시뮬레이터 (개발/테스트 전용)
 │   └── src/main/java/com/sentinelml/simulator/
+│       ├── SimulatorApplication.java  # Spring Boot 진입점
 │       ├── SimulatorRunner.java       # CommandLineRunner 기반 produce 루프
 │       ├── producer/
 │       │   └── TransactionProducer.java
@@ -99,6 +121,8 @@ sentinel-ml/
 ### 사전 조건
 
 - Docker Desktop 설치
+- Java 17 (백엔드 빌드·실행 시)
+- Python 3.11 (ML 파이프라인 실행 시)
 - `.env` 파일 생성 (`.env.example` 참고)
 
 ```bash
@@ -153,6 +177,21 @@ $env:POSTGRES_PASSWORD="your_password"
 ```bash
 ./gradlew :api:bootRun
 ```
+
+### ML 모델 학습 (Python)
+
+[Kaggle Credit Card Fraud 데이터셋](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)을 받아 `ml/data/creditcard.csv`로 배치한 뒤:
+
+```bash
+cd ml
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # Windows (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+python train.py
+```
+
+학습 결과(parameters / metrics)는 MLflow에 기록됩니다 → http://localhost:5000
+(MLflow 컨테이너가 실행 중이어야 합니다)
 
 ---
 
@@ -230,12 +269,17 @@ $env:POSTGRES_PASSWORD="your_password"
 - Rule Engine — 규칙 기반 1차 필터 (10ms 이내 처리 목표)
 - Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
 
+### ✅ 5월 — ML 클라이언트 연동
+- FastAPI 추론 서버 WebClient (`MlScoreClient`) 구현
+- Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
+- `MlScoreRequest` / `MlScoreResponse` DTO 및 단위 테스트
+- 
 ### 🔄 6월 1주차 — ML 베이스라인 (진행 중)
 - Credit Card Fraud 데이터셋 (284,807건, 정상:사기 ≈ 578:1)
 - XGBoost 베이스라인 학습 — ROC-AUC 0.98, 사기 Recall 0.87
 - MLflow 실험 기록 (parameters / metrics)
 
 ### 🔜 예정
-- FastAPI 추론 서버 + Java WebClient 연동 (타임아웃/Fallback)
+- FastAPI 추론 서버 구현 및 Java ↔ Python E2E 연동 검증
 - MLOps — Airflow 재학습, Drift 모니터링, Shadow Deployment
 - k6 부하 테스트 — P95 < 100ms 검증
