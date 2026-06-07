@@ -1,6 +1,6 @@
 # Sentinel-ML
 
-실시간 금융 사기 탐지 시스템 (Financial Detection System)
+실시간 금융 사기 탐지 시스템 (Fraud Detection System)
 
 ![Java](https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4.0-6DB33F?style=flat-square&logo=springboot)
@@ -267,13 +267,12 @@ python train.py
 - Kafka Consumer 처리 실패 시 DLQ 자동 라우팅
 - Redis 캐싱 레이어 — Sorted Set 거래 이력, Sliding Window Counter
 - Rule Engine — 규칙 기반 1차 필터 (10ms 이내 처리 목표)
-- Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
 
 ### ✅ 5월 — ML 클라이언트 연동
-- FastAPI 추론 서버 WebClient (`MlScoreClient`) 구현
+- FastAPI 추론 서버를 호출할 WebClient (`MlScoreClient`) 구현
 - Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
 - `MlScoreRequest` / `MlScoreResponse` DTO 및 단위 테스트
-- 
+
 ### 🔄 6월 1주차 — ML 베이스라인 (진행 중)
 - Credit Card Fraud 데이터셋 (284,807건, 정상:사기 ≈ 578:1)
 - XGBoost 베이스라인 학습 — ROC-AUC 0.98, 사기 Recall 0.87
