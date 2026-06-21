@@ -1,6 +1,7 @@
 package com.sentinelml.simulator;
 
 import com.sentinelml.simulator.config.SimulatorProperties;
+import com.sentinelml.simulator.loader.CreditCardFeatureLoader;
 import com.sentinelml.simulator.producer.TransactionProducer;
 import com.sentinel.common.dto.TransactionMessage;
 import org.springframework.boot.CommandLineRunner;
@@ -17,26 +18,27 @@ public class SimulatorRunner implements CommandLineRunner {
 
     private final TransactionProducer producer;
     private final SimulatorProperties properties;
+    private final CreditCardFeatureLoader featureLoader;
     private final Random random = new Random();
 
-    // 시뮬레이션용 고정 풀
     private static final List<String> USER_IDS = List.of(
-            "user-001", "user-002", "user-003", "user-004", "user-005"
-    );
+            "user-001", "user-002", "user-003", "user-004", "user-005");
     private static final List<String> CATEGORIES = List.of(
-            "GROCERY", "RESTAURANT", "ONLINE", "GAS_STATION", "TRAVEL"
-    );
-    private static final List<String> COUNTRIES = List.of(
-            "KR", "US", "JP"
-    );
+            "GROCERY", "RESTAURANT", "ONLINE", "GAS_STATION", "TRAVEL");
+    private static final List<String> COUNTRIES = List.of("KR", "US", "JP");
 
-    public SimulatorRunner(TransactionProducer producer, SimulatorProperties properties) {
+    public SimulatorRunner(TransactionProducer producer,
+                           SimulatorProperties properties,
+                           CreditCardFeatureLoader featureLoader) {
         this.producer = producer;
         this.properties = properties;
+        this.featureLoader = featureLoader;
     }
 
     @Override
     public void run(String... args) throws Exception {
+        featureLoader.load(properties.csvPath());   // csv 1회 로드
+
         System.out.printf("Simulator started | rate=%d/s | fraud-ratio=%.1f%%%n",
                 properties.rate(), properties.fraudRatio() * 100);
 
@@ -56,17 +58,17 @@ public class SimulatorRunner implements CommandLineRunner {
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
                 USER_IDS.get(random.nextInt(USER_IDS.size())),
-                BigDecimal.valueOf(1000 + random.nextInt(490000)),  // 1천 ~ 50만
+                BigDecimal.valueOf(1000 + random.nextInt(490000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
                 "192.168.1." + random.nextInt(255),
                 "KR",
                 LocalDateTime.now(),
-                false
+                false,
+                featureLoader.randomNormal()    // Class=0 행
         );
     }
 
-    // 패턴 선택기
     private TransactionMessage buildFraudTransaction() {
         int pattern = random.nextInt(3);
         return switch (pattern) {
@@ -76,38 +78,36 @@ public class SimulatorRunner implements CommandLineRunner {
         };
     }
 
-    // 패턴 1: 단시간 고빈도 — 동일 userId로 짧은 간격 반복
     private TransactionMessage buildHighFrequencyFraud() {
-        String fixedUser = "user-001";  // 동일 userId 고정
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
-                fixedUser,
+                "user-001",
                 BigDecimal.valueOf(10000 + random.nextInt(50000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(3),
                 "192.168.1." + random.nextInt(255),
                 "KR",
                 LocalDateTime.now(),
-                true
+                true,
+                featureLoader.randomFraud()     // Class=1 행
         );
     }
 
-    // 패턴 2: 비정상 고액 — 정상 거래 상한(50만)의 10배 이상
     private TransactionMessage buildHighAmountFraud() {
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
                 USER_IDS.get(random.nextInt(USER_IDS.size())),
-                BigDecimal.valueOf(5000000 + random.nextInt(5000000)),  // 500만~1000만
+                BigDecimal.valueOf(5000000 + random.nextInt(5000000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
                 "192.168.1." + random.nextInt(255),
                 "KR",
                 LocalDateTime.now(),
-                true
+                true,
+                featureLoader.randomFraud()
         );
     }
 
-    // 패턴 3: 이상 위치 — KR에서 방금 결제했는데 해외 국가에서 결제
     private TransactionMessage buildLocationMismatchFraud() {
         List<String> foreignCountries = List.of("US", "JP", "CN", "RU");
         return new TransactionMessage(
@@ -119,7 +119,8 @@ public class SimulatorRunner implements CommandLineRunner {
                 "192.168." + random.nextInt(255) + "." + random.nextInt(255),
                 foreignCountries.get(random.nextInt(foreignCountries.size())),
                 LocalDateTime.now(),
-                true
+                true,
+                featureLoader.randomFraud()
         );
     }
 }
