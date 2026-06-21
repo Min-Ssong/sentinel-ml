@@ -8,3 +8,5 @@ imbalanced-learn
 mlflow==2.9.2
 matplotlib
 seaborn
+fastapi
+uvicorn[standard]
