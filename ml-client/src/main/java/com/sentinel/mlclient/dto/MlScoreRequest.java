@@ -1,13 +1,9 @@
 package com.sentinel.mlclient.dto;
 
-import java.math.BigDecimal;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.List;
 
 public record MlScoreRequest(
-        String transactionId,
-        String userId,
-        BigDecimal amount,
-        String country,
-        String merchantCategory,
-        String deviceId,
-        String ipAddress
+        @JsonProperty("transaction_id") String transactionId,
+        @JsonProperty("features") List<Double> features
 ) {}

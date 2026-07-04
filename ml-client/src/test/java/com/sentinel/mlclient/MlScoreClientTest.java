@@ -5,7 +5,9 @@ import com.sentinel.mlclient.dto.MlScoreResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,10 +16,8 @@ class MlScoreClientTest {
     private final MlScoreClient mlScoreClient = new MlScoreClient("http://localhost:8000");
 
     private MlScoreRequest sampleRequest() {
-        return new MlScoreRequest(
-                "txId-001", "user-001", new BigDecimal("10000"),
-                "KR", "ONLINE", "device-1", "1.1.1.1"
-        );
+        List<Double> features = new ArrayList<>(Collections.nCopies(30, 0.0));
+        return new MlScoreRequest("txId-001", features);
     }
 
     @Test
@@ -26,7 +26,7 @@ class MlScoreClientTest {
         MlScoreResponse response = mlScoreClient.fallback(
                 sampleRequest(), new RuntimeException("Connection refused"));
 
-        assertThat(response.score()).isEqualTo(-1.0);
+        assertThat(response.fraudScore()).isEqualTo(-1.0);
         assertThat(response.transactionId()).isEqualTo("txId-001");
     }
 

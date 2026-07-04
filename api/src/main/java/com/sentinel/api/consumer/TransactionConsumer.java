@@ -67,34 +67,28 @@ public class TransactionConsumer {
                 log.info("Transaction blocked by rule | txId={} | rule={} | reason={}",
                         message.transactionId(), ruleResult.triggeredRule(), ruleResult.reason());
             } else {
-                // Rule Engine 통과 → ML 서버 호출
                 MlScoreRequest mlRequest = new MlScoreRequest(
                         message.transactionId(),
-                        message.userId(),
-                        message.amount(),
-                        message.country(),
-                        message.merchantCategory(),
-                        message.deviceId(),
-                        message.ipAddress()
+                        message.features()
                 );
 
                 MlScoreResponse mlResponse = mlScoreClient.score(mlRequest);
 
-                if (mlResponse.score() < 0) {
+                if (mlResponse.fraudScore() < 0) {
                     // Fallback 발생 (ML 서버 다운)
                     status = "PENDING";
                     log.warn("ML fallback applied | txId={} | status=PENDING",
                             message.transactionId());
-                } else if (mlResponse.score() >= BLOCK_THRESHOLD) {
+                } else if (mlResponse.fraudScore() >= BLOCK_THRESHOLD) {
                     status = "BLOCKED";
-                } else if (mlResponse.score() >= REVIEW_THRESHOLD) {
+                } else if (mlResponse.fraudScore() >= REVIEW_THRESHOLD) {
                     status = "REVIEW";
                 } else {
                     status = "APPROVED";
                 }
 
                 log.info("ML score applied | txId={} | score={} | status={}",
-                        message.transactionId(), mlResponse.score(), status);
+                        message.transactionId(), mlResponse.fraudScore(), status);
             }
 
             Transaction transaction = toEntity(message, status);

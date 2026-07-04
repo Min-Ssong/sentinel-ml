@@ -33,6 +33,10 @@ spring:
 
 server:
   port: 8080
+ml:
+  server:
+    url: http://localhost:8095
+    timeout-ms: 5000
 
 resilience4j:
   circuitbreaker:
