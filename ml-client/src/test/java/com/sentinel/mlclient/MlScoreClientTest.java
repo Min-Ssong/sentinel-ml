@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MlScoreClientTest {
 
-    private final MlScoreClient mlScoreClient = new MlScoreClient("http://localhost:8000");
+    private final MlScoreClient mlScoreClient = new MlScoreClient("http://localhost:8000", 5000L);
 
     private MlScoreRequest sampleRequest() {
         List<Double> features = new ArrayList<>(Collections.nCopies(30, 0.0));
