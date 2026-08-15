@@ -47,3 +47,5 @@ application-dev.yml
 # Python
 __pycache__/
 *.pyc
+
+infra/docker/airflow/logs/
