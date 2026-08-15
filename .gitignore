@@ -49,3 +49,5 @@ __pycache__/
 *.pyc
 
 infra/docker/airflow/logs/
+
+infra/docker/airflow/logs/
