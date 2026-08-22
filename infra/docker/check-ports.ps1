@@ -1,4 +1,4 @@
-# Sentinel-ML port check
+﻿# Sentinel-ML port check
 # Windows reserved port ranges change on reboot / WSL restart.
 # Run this BEFORE starting containers.
 
@@ -8,9 +8,9 @@ $ports = [ordered]@{
     "PostgreSQL" = 5432
     "Redis"      = 6379
     "MLflow"     = 5000
-    "SpringAPI"  = 8080
-    "FastAPI"    = 8095
-    "Airflow"    = 8081
+    "SpringAPI"  = 8280
+    "FastAPI"    = 8295
+    "Airflow"    = 8281
 }
 
 $raw = netsh interface ipv4 show excludedportrange protocol=tcp

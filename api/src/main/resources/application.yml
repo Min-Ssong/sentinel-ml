@@ -1,4 +1,4 @@
-spring:
+﻿spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/sentinel
     username: ${POSTGRES_USER}
@@ -32,10 +32,10 @@ spring:
         spring.json.value.default.type: com.sentinel.common.dto.TransactionMessage
 
 server:
-  port: 8080
+  port: 8280
 ml:
   server:
-    url: http://localhost:8095
+    url: http://localhost:8295
     timeout-ms: 5000
 
 resilience4j:

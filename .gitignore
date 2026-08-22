@@ -51,3 +51,6 @@ __pycache__/
 infra/docker/airflow/logs/
 
 infra/docker/airflow/logs/
+
+infra/docker/airflow/logs/
+infra/docker/airflow/dags/__pycache__/

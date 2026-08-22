@@ -62,6 +62,7 @@ services:
       --artifacts-destination /mlflow/artifacts
       --serve-artifacts
       --host 0.0.0.0
+      --allowed-hosts "localhost:*,127.0.0.1:*,host.docker.internal:*"
 
 volumes:
   postgres_data:
