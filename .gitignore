@@ -20,16 +20,9 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# virtual machine crash logs
 hs_err_pid*
 replay_pid*
-
-# Sentinel-ML
-infra/docker/.env
-postgres_data/
-mlflow_artifacts/
-ml/.venv
-ml/data
 
 # Gradle
 .gradle/
@@ -40,17 +33,25 @@ build/
 *.iml
 out/
 
-# 환경별 설정 파일 (민감 정보 포함 가능)
-application-local.yml
-application-prod.yml
-application-dev.yml
 # Python
 __pycache__/
 *.pyc
 
-infra/docker/airflow/logs/
+# 환경별 설정 파일 (민감 정보 포함 가능)
+application-local.yml
+application-prod.yml
+application-dev.yml
 
-infra/docker/airflow/logs/
+# --- Sentinel-ML ---
+# 환경 변수 (.env.example 은 커밋함)
+infra/docker/.env
+infra/docker/airflow/.env
 
+# 데이터·아티팩트 (PC별 독립, clone 시 재생성)
+postgres_data/
+mlflow_artifacts/
+ml/.venv
+ml/data
+
+# Airflow 런타임 생성물
 infra/docker/airflow/logs/
-infra/docker/airflow/dags/__pycache__/

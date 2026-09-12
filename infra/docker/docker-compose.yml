@@ -6,7 +6,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2281:2181"
+      - "${ZOOKEEPER_PORT}:2181"
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -14,12 +14,12 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9192:9192"
+      - "${KAFKA_PORT}:${KAFKA_PORT}"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9192
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9192
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:${KAFKA_PORT}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_PORT}
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
 
@@ -27,14 +27,14 @@ services:
     image: redis:7.2-alpine
     container_name: sentinel-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:6379"
     command: redis-server --appendonly yes
 
   postgres:
     image: postgres:15
     container_name: sentinel-postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -50,7 +50,7 @@ services:
     depends_on:
       - postgres
     ports:
-      - "5000:5000"
+      - "${MLFLOW_PORT}:5000"
     environment:
       MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts

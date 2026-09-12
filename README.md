@@ -16,9 +16,8 @@
 
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
-- Circuit Breaker + DLQ + Fallback — 장애 상황에서도 100ms SLA 유지
-- MLOps 자동화 사이클 — 드리프트 감지 → 자동 재학습 → Shadow Deployment
-
+- Circuit Breaker + DLQ + Fallback — ML 서버 장애 시에도 거래 처리 중단 없음 (P95 100ms SLA는 k6 검증 예정)
+- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격 (Drift 감지·Shadow Deployment 구현 예정)
 ---
 
 ## 기술 스택
@@ -29,9 +28,9 @@
 | Streaming | Apache Kafka, Spring Kafka |
 | Cache | Redis (Sorted Set, Sliding Window) |
 | ML | Python 3.11, FastAPI, XGBoost / LightGBM |
-| MLOps | MLflow 2.9.2, Apache Airflow |
+| MLOps | MLflow 3.15.1, Apache Airflow 3.x |
 | 장애 내성 | Resilience4j (Circuit Breaker, Retry) |
-| 모니터링 | Prometheus, Grafana |
+| 모니터링 | Prometheus, Grafana (예정) |
 | Infra | Docker Compose |
 | DB | PostgreSQL 15 |
 | Test | JUnit 5, Mockito, k6 |
@@ -88,19 +87,29 @@ sentinel-ml/
 │           ├── MlScoreRequest.java
 │           └── MlScoreResponse.java
 ├── ml/                   # Python ML 파이프라인
-│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록
 │   ├── explore.py        # 데이터 탐색 (EDA)
+│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록
+│   ├── check_split.py    # Time 분할 시 배치별 사기 건수 확인
+│   ├── retrain_sim.py    # 누적 재학습 시뮬레이션
+│   ├── measure_noise.py  # seed 변동에 따른 성능 편차 측정
 │   ├── requirements.txt
+│   ├── serving/
+│   │   └── app.py        # FastAPI 추론 서버
 │   └── data/
 │       └── creditcard.csv  # Credit Card Fraud 데이터셋 (git 제외)
 ├── simulator/            # 트랜잭션 시뮬레이터 (개발/테스트 전용)
-│   └── src/main/java/com/sentinelml/simulator/
-│       ├── SimulatorApplication.java  # Spring Boot 진입점
-│       ├── SimulatorRunner.java       # CommandLineRunner 기반 produce 루프
-│       ├── producer/
-│       │   └── TransactionProducer.java
-│       └── config/
-│           └── SimulatorProperties.java  # --rate, --fraud-ratio 파라미터
+│   └── src/main/
+│       ├── java/com/sentinelml/simulator/
+│       │   ├── SimulatorApplication.java  # Spring Boot 진입점
+│       │   ├── SimulatorRunner.java       # CommandLineRunner 기반 produce 루프
+│       │   ├── producer/
+│       │   │   └── TransactionProducer.java
+│       │   ├── loader/
+│       │   │   └── CreditCardFeatureLoader.java  # creditcard.csv 피처 로딩
+│       │   └── config/
+│       │       └── SimulatorProperties.java      # --rate, --fraud-ratio 파라미터
+│       └── resources/
+│           └── application.yml
 ├── docs/
 │   ├── erd.md                         # PostgreSQL ERD 설계 문서
 │   ├── kafka-topic-design.md          # Kafka 토픽 설계 문서
@@ -110,8 +119,15 @@ sentinel-ml/
 │   └── docker/
 │       ├── docker-compose.yml
 │       ├── Dockerfile.mlflow
-│       └── .env                       # git 제외
-└── .env.example                       # 환경변수 템플릿
+│       ├── check-ports.ps1            # 예약 포트 범위 검사
+│       ├── .env                       # git 제외
+│       ├── .env.example
+│       └── airflow/                   # Airflow 별도 compose
+│           ├── docker-compose.yaml
+│           ├── dags/
+│           │   └── retrain_dag.py     # 재학습 DAG
+│           ├── .env                   # git 제외 (FERNET_KEY)
+│           └── .env.example
 ```
 
 ---
@@ -120,78 +136,127 @@ sentinel-ml/
 
 ### 사전 조건
 
-- Docker Desktop 설치
+- Docker Desktop
 - Java 17 (백엔드 빌드·실행 시)
 - Python 3.11 (ML 파이프라인 실행 시)
-- `.env` 파일 생성 (`.env.example` 참고)
+
+### 1) 환경변수 준비
+
+포트·자격증명은 `infra/docker/.env`로 관리합니다. 포트 충돌 시 이 파일만 수정하면 인프라(Docker) 계층은 모두 반영됩니다.
+
+> Spring `application.yml`, Python 스크립트, Airflow DAG의 접속 주소는 아직 개별 설정입니다. `.env` 포트를 기본값과 다르게 바꾸는 경우 해당 파일도 함께 수정해야 합니다. (환경변수 주입 방식으로 통합 예정)
 
 ```bash
-# .env 파일 생성
-cp .env.example infra/docker/.env
-# 값 직접 입력 후 저장
+cd infra/docker
+cp .env.example .env                    # PowerShell: Copy-Item .env.example .env
+cp airflow/.env.example airflow/.env
 ```
 
-### 인프라 실행
+`airflow/.env`의 `FERNET_KEY`는 비어 있으므로 직접 생성해 채웁니다.
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+### 2) 포트 확인
+
+```powershell
+.\infra\docker\check-ports.ps1
+```
+
+충돌 시 `infra/docker/.env`의 해당 포트 값만 바꾸면 됩니다.
+
+> **한계**: 이 스크립트는 Windows 예약 포트 범위(`netsh interface ipv4 show excludedportrange`)만 검사합니다. 다른 프로세스의 실제 점유 여부는 `netstat -ano | findstr :<포트>` 로 별도 확인이 필요합니다.
+>
+> 예약 범위는 PC마다 다릅니다. 실측 예 — 데스크톱: 9051~9150 포함(9092 사용 불가) / 노트북: 미포함. 같은 저장소라도 기계가 바뀌면 포트가 달라지는 이유입니다.
+
+### 3) 인프라 실행
 
 ```bash
 cd infra/docker
 docker compose up -d
+docker compose ps      # 5개 서비스 Up 확인
 ```
 
-### Kafka 토픽 생성
+### 4) Kafka 토픽 생성
+
+컨테이너 재시작 시 토픽이 초기화될 수 있으므로, 기동 후 존재 여부를 확인합니다.
 
 ```bash
-docker exec -it sentinel-kafka kafka-topics --create --topic transactions --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
-docker exec -it sentinel-kafka kafka-topics --create --topic fraud-alerts --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
-docker exec -it sentinel-kafka kafka-topics --create --topic dlq --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+docker exec -it sentinel-kafka kafka-topics --list --bootstrap-server localhost:9192
+
+# 없으면 생성 (KAFKA_PORT 변경 시 아래 포트도 함께 변경)
+docker exec -it sentinel-kafka kafka-topics --create --topic transactions  --bootstrap-server localhost:9192 --partitions 3 --replication-factor 1
+docker exec -it sentinel-kafka kafka-topics --create --topic fraud-alerts  --bootstrap-server localhost:9192 --partitions 3 --replication-factor 1
+docker exec -it sentinel-kafka kafka-topics --create --topic dlq           --bootstrap-server localhost:9192 --partitions 1 --replication-factor 1
 ```
 
-### 서비스 주소
+### 5) Airflow 실행 (MLOps 재학습 파이프라인)
 
-| 서비스 | 주소 |
-|---|---|
-| MLflow UI | http://localhost:5000 |
-| Kafka | localhost:9092 |
-| PostgreSQL | localhost:5432 |
-| Redis | localhost:6379 |
+sentinel 인프라와 **별도 compose**입니다.
 
-### 빌드
+```bash
+cd infra/docker/airflow
+docker compose build      # 최초 1회. 소요 큼 (실측 약 18분, 노트북 기준)
+docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
+```
+
+> 이미지와 메타DB 볼륨은 PC 간 공유되지 않습니다. 다른 PC에서 처음 실행하면 build와 init을 다시 거칩니다. 멈춘 것처럼 보여도 `docker stats`의 BLOCK I/O가 증가 중이면 정상 진행입니다.
+>
+> 최초 기동 시 apiserver가 수 분간 unhealthy로 표시될 수 있습니다. docker compose logs airflow-apiserver에 오류가 없다면 부팅 중이므로 기다리면 됩니다. (실측: 노트북에서 기동 완료까지 약 30분)
+
+접속: `http://localhost:8281` (`AIRFLOW_PORT`)
+
+### 6) 빌드 및 서비스 실행
 
 ```bash
 ./gradlew build
-```
-
-### 시뮬레이터 실행
-
-```bash
-# 환경변수 설정 (PowerShell)
-$env:POSTGRES_USER="sentinel"
-$env:POSTGRES_PASSWORD="your_password"
-
-# 초당 10건, 이상 거래 비율 20%
+./gradlew :api:bootRun
 ./gradlew :simulator:bootRun --args='--simulator.rate=10 --simulator.fraud-ratio=0.2'
 ```
 
-### API 서버 실행
+### 7) FastAPI 추론 서버
 
 ```bash
-./gradlew :api:bootRun
+cd ml
+.venv\Scripts\Activate.ps1
+uvicorn serving.app:app --host 0.0.0.0 --port 8295
 ```
 
-### ML 모델 학습 (Python)
+> MLflow 컨테이너가 먼저 떠 있어야 모델 로드에 성공합니다.
 
-[Kaggle Credit Card Fraud 데이터셋](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)을 받아 `ml/data/creditcard.csv`로 배치한 뒤:
+### 서비스 주소
+
+| 서비스 | 기본 포트 | `.env` 키 |
+|---|---|---|
+| MLflow UI | 5000 | `MLFLOW_PORT` |
+| Airflow UI | 8281 | `AIRFLOW_PORT` |
+| Spring API | 8280 | `SPRING_API_PORT` |
+| FastAPI | 8295 | `FASTAPI_PORT` |
+| Kafka | 9192 | `KAFKA_PORT` |
+| Zookeeper | 2281 | `ZOOKEEPER_PORT` |
+| PostgreSQL | 5432 | `POSTGRES_PORT` |
+| Redis | 6379 | `REDIS_PORT` |
+
+### ML 파이프라인 (Python)
+
+[Kaggle Credit Card Fraud 데이터셋](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)을 `ml/data/creditcard.csv`로 배치한 뒤:
 
 ```bash
 cd ml
 python -m venv .venv
-.venv\Scripts\Activate.ps1      # Windows (macOS/Linux: source .venv/bin/activate)
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python train.py
 ```
 
-학습 결과(parameters / metrics)는 MLflow에 기록됩니다 → http://localhost:5000
-(MLflow 컨테이너가 실행 중이어야 합니다)
+| 스크립트 | 역할 |
+|---|---|
+| `explore.py` | 데이터 탐색(EDA) |
+| `train.py` | XGBoost 베이스라인 학습 + MLflow 기록 |
+| `check_split.py` | Time 기준 배치 분할 시 배치별 사기 건수 확인 |
+| `retrain_sim.py` | 누적 재학습 시뮬레이션 |
+| `measure_noise.py` | seed 변동에 따른 성능 편차 측정 |
+| `serving/app.py` | FastAPI 추론 서버 |
 
 ---
 
@@ -239,6 +304,7 @@ python train.py
 
 불균형 보정은 XGBoost의 `scale_pos_weight = 정상 수 / 사기 수 ≈ 577`로 사기 클래스에 가중치를 부여하는 방식을 택했습니다. SMOTE 오버샘플링 대신 가중치 방식을 쓴 이유는 간단하고 XGBoost가 네이티브로 지원하기 때문입니다.
 
+**초기 베이스라인(6월, 랜덤 분할 기준)**
 - 결과: ROC-AUC 0.98, 사기 Recall 0.87 (98건 중 85건 탐지)
 - Precision 0.33은 trade-off입니다 — 가중치를 최대로 줘 Recall을 끌어올린 대가이며, 임계값·가중치 튜닝으로 조정 가능한 베이스라인 수준입니다
 
@@ -273,12 +339,20 @@ python train.py
 - Resilience4j Circuit Breaker + Fallback — ML 서버 장애 시 Rule 결과로 처리
 - `MlScoreRequest` / `MlScoreResponse` DTO 및 단위 테스트
 
-### 🔄 6월 1주차 — ML 베이스라인 (진행 중)
-- Credit Card Fraud 데이터셋 (284,807건, 정상:사기 ≈ 578:1)
-- XGBoost 베이스라인 학습 — ROC-AUC 0.98, 사기 Recall 0.87
-- MLflow 실험 기록 (parameters / metrics)
+### ✅ 6월 — ML 모델 개발 및 추론 통합
+- FastAPI 추론 서버 구현, Java ↔ Python E2E 연동 검증
+- MDC txId 전 구간 추적 확인 (Simulator → Kafka → Consumer → FastAPI → DB)
+- 실제 점수 확인: 정상 거래 0.005 / 사기 거래 0.999
+
+### ✅ 8월 — MLOps 재학습 파이프라인
+- 재학습 데이터 전략: Time 순서 3분할 + 누적 학습, 뒤 20% 고정 holdout
+- 성능 게이트: ROC-AUC 기준, tolerance 0.0 (프로덕션 학습 설정이 결정론적임을 실측으로 확인)
+- Airflow 설치 및 재학습 DAG 구현 — 배치 추출 → 학습 → MLflow 등록 → 게이트 판정
+- 게이트 동작 실증: challenger 0.9661 < champion 0.9812 → 승격 차단 / 통과 시 @champion alias 승격 (v12)
+- 누적 재학습 ROC-AUC: 0.9661 → 0.9700 → 0.9824
 
 ### 🔜 예정
-- FastAPI 추론 서버 구현 및 Java ↔ Python E2E 연동 검증
-- MLOps — Airflow 재학습, Drift 모니터링, Shadow Deployment
+- Drift 모니터링 (Prometheus + Grafana)
+- Shadow Deployment — Champion/Challenger 병행 추론
 - k6 부하 테스트 — P95 < 100ms 검증
+- 장애 시나리오 테스트 (Circuit Breaker / DLQ / Fallback)

@@ -2,15 +2,22 @@
 # Windows reserved port ranges change on reboot / WSL restart.
 # Run this BEFORE starting containers.
 
-$ports = [ordered]@{
-    "Kafka"      = 9192
-    "Zookeeper"  = 2281
-    "PostgreSQL" = 5432
-    "Redis"      = 6379
-    "MLflow"     = 5000
-    "SpringAPI"  = 8280
-    "FastAPI"    = 8295
-    "Airflow"    = 8281
+$envPath = Join-Path $PSScriptRoot ".env"
+$env_vars = @{}
+Get-Content $envPath | Where-Object { $_ -match "^\s*[^#].*=" } | ForEach-Object {
+    $k, $v = $_ -split "=", 2
+    $env_vars[$k.Trim()] = $v.Trim()
+}
+
+$ports = @{
+    "Kafka"      = [int]$env_vars["KAFKA_PORT"]
+    "Zookeeper"  = [int]$env_vars["ZOOKEEPER_PORT"]
+    "PostgreSQL" = [int]$env_vars["POSTGRES_PORT"]
+    "Redis"      = [int]$env_vars["REDIS_PORT"]
+    "MLflow"     = [int]$env_vars["MLFLOW_PORT"]
+    "SpringAPI"  = [int]$env_vars["SPRING_API_PORT"]
+    "FastAPI"    = [int]$env_vars["FASTAPI_PORT"]
+    "Airflow"    = [int]$env_vars["AIRFLOW_PORT"]
 }
 
 $raw = netsh interface ipv4 show excludedportrange protocol=tcp
