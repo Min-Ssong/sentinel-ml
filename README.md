@@ -139,6 +139,7 @@ sentinel-ml/
 - Docker Desktop
 - Java 17 (백엔드 빌드·실행 시)
 - Python 3.11 (ML 파이프라인 실행 시)
+- 다른 PC에서 이어서 작업하는 경우, docker compose build 로 mlflow·airflow 이미지를 갱신하세요. 이미지는 PC 간 공유되지 않으며, Dockerfile이 바뀌어도 기존 이미지에 자동 반영되지 않습니다.
 
 ### 1) 환경변수 준비
 
