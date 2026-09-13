@@ -1,8 +1,8 @@
 ﻿spring:
   datasource:
-    url: jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/sentinel
-    username: ${POSTGRES_USER}
-    password: ${POSTGRES_PASSWORD}
+    url: jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/${POSTGRES_DB:sentineldb}
+    username: ${POSTGRES_USER:sentinel}
+    password: ${POSTGRES_PASSWORD:sentinel123}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:

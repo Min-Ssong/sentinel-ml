@@ -79,7 +79,8 @@ sentinel-ml/
 │       └── resources/
 │           ├── logback-spring.xml                 # 환경별 JSON/텍스트 로그 설정
 │           ├── application.yml
-│           └── application-local.yml
+│           ├── application-local.yml         # git 제외
+│           └── application-local.yml.example
 ├── ml-client/            # FastAPI 추론 서버 WebClient + Circuit Breaker
 │   └── src/main/java/com/sentinel/mlclient/
 │       ├── MlScoreClient.java                     # WebClient + Resilience4j Circuit Breaker
@@ -139,26 +140,39 @@ sentinel-ml/
 - Docker Desktop
 - Java 17 (백엔드 빌드·실행 시)
 - Python 3.11 (ML 파이프라인 실행 시)
-- 다른 PC에서 이어서 작업하는 경우, docker compose build 로 mlflow·airflow 이미지를 갱신하세요. 이미지는 PC 간 공유되지 않으며, Dockerfile이 바뀌어도 기존 이미지에 자동 반영되지 않습니다.
+
+> 아래 명령은 **PowerShell 기준**입니다. Git Bash를 쓰신다면 `Copy-Item` → `cp`,
+> `Get-Content` → `cat`, 경로 구분자 `\` → `/` 로 바꿔 실행하세요.
 
 ### 1) 환경변수 준비
 
 포트·자격증명은 `infra/docker/.env`로 관리합니다. 포트 충돌 시 이 파일만 수정하면 인프라(Docker) 계층은 모두 반영됩니다.
 
-> Spring `application.yml`, Python 스크립트, Airflow DAG의 접속 주소는 아직 개별 설정입니다. `.env` 포트를 기본값과 다르게 바꾸는 경우 해당 파일도 함께 수정해야 합니다. (환경변수 주입 방식으로 통합 예정)
-
-```bash
-cd infra/docker
-cp .env.example .env                    # PowerShell: Copy-Item .env.example .env
-cp airflow/.env.example airflow/.env
+```powershell
+cd infra\docker
+Copy-Item .env.example .env
+Copy-Item airflow\.env.example airflow\.env
 ```
 
-`airflow/.env`의 `FERNET_KEY`는 비어 있으므로 직접 생성해 채웁니다.
+`airflow\.env` 의 `FERNET_KEY` 는 비어 있으므로 직접 생성해 채웁니다.
 
-```bash
-pip install cryptography
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```powershell
+docker run --rm apache/airflow:3.3.1 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+> Docker 이미지로 생성하므로 별도 패키지 설치가 필요 없습니다.
+>
+> **Spring은 `.env` 파일을 읽지 않습니다.** `application.yml` 의 기본값으로 동작하며,
+> `.env` 의 포트나 자격증명을 기본값과 다르게 바꿨다면 실행 전 환경변수로 전달해야 합니다.
+>
+> ```powershell
+> $env:POSTGRES_USER="sentinel"
+> $env:POSTGRES_PASSWORD="sentinel123"
+> $env:SPRING_API_PORT="8490"
+> ```
+>
+> `api/src/main/resources/application-local.yml` 은 git에서 제외됩니다.
+> 로컬 설정을 덮어쓰려면 직접 생성하세요.
 
 ### 2) 포트 확인
 
@@ -177,7 +191,7 @@ powershell -ExecutionPolicy Bypass -File .\check-ports.ps1
 > `infra/docker/.env`의 값을 직접 조정하세요.
 >
 > 예약 범위는 PC마다, 시점에 따라 달라집니다.
-> (실측: 같은 PC에서도 8/22 8004~8203 → 9/13 8182~8281로 변동)
+> (실측: 같은 PC에서 8/22 8004~8203 → 9/13 오후 8182~8281 → 9/13 저녁 8207~8406)
 
 ### 3) 인프라 실행
 
@@ -189,9 +203,10 @@ docker compose ps      # 5개 서비스 Up 확인
 ### 4) DB 스키마 적용
 
 ```powershell
-Get-Content docs/sql/schema.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
+Get-Content ..\..\docs\sql\schema.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
 ```
 
+> `infra\docker` 에서 실행하는 기준입니다.
 > `postgres_data` 볼륨은 PC 간 공유되지 않으므로 새 환경에서는 반드시 실행해야 합니다.
 > 누락 시 `Schema-validation: missing table [fraud_results]` 로 API 기동이 실패합니다.
 
@@ -222,7 +237,7 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 >
 > 최초 기동 시 apiserver가 수 분간 unhealthy로 표시될 수 있습니다. docker compose logs airflow-apiserver에 오류가 없다면 부팅 중이므로 기다리면 됩니다. (실측: 노트북에서 기동 완료까지 약 30분)
 
-접속: `http://localhost:8291` (`AIRFLOW_PORT`)
+접속: `http://localhost:8491` (`AIRFLOW_PORT`)
 
 ### 7) 빌드 및 서비스 실행
 
@@ -237,7 +252,7 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 ```bash
 cd ml
 .venv\Scripts\Activate.ps1
-uvicorn serving.app:app --host 0.0.0.0 --port 8295
+uvicorn serving.app:app --host 0.0.0.0 --port 8495
 ```
 
 > MLflow 컨테이너가 먼저 떠 있어야 모델 로드에 성공합니다.
@@ -247,9 +262,9 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8295
 | 서비스 | 기본 포트 | `.env` 키 |
 |---|---|---|
 | MLflow UI | 5000 | `MLFLOW_PORT` |
-| Airflow UI | 8291 | `AIRFLOW_PORT` |
-| Spring API | 8290 | `SPRING_API_PORT` |
-| FastAPI | 8295 | `FASTAPI_PORT` |
+| Airflow UI | 8491 | `AIRFLOW_PORT` |
+| Spring API | 8490 | `SPRING_API_PORT` |
+| FastAPI | 8495 | `FASTAPI_PORT` |
 | Kafka | 9192 | `KAFKA_PORT` |
 | Zookeeper | 2281 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5432 | `POSTGRES_PORT` |
@@ -257,7 +272,7 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8295
 
 > 기본 포트는 `infra/docker/.env`에서 변경할 수 있습니다. Windows 예약 범위는 PC마다,
 > 그리고 시점에 따라 달라지므로 `check-ports.ps1`로 먼저 확인하세요.
-> (실측: 같은 PC에서도 8/22 8004~8203 → 9/13 8182~8281로 변동)
+> (실측: 같은 PC에서 8/22 8004~8203 → 9/13 오후 8182~8281 → 9/13 저녁 8207~8406)
 
 ### ML 파이프라인 (Python)
 
