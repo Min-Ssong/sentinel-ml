@@ -4,6 +4,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_sco
 from xgboost import XGBClassifier
 import mlflow
 import mlflow.xgboost
+import os
 
 # === 1. 데이터 준비: Time 정렬 → holdout 분리 → 학습분 3분할 ===
 df = pd.read_csv("data/creditcard.csv").sort_values("Time").reset_index(drop=True)
@@ -29,7 +30,7 @@ X_hold = holdout.drop("Class", axis=1)
 y_hold = holdout["Class"]
 
 # === 2. MLflow 설정 ===
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri(os.getenv("MLFLOW_URI", "http://localhost:5000"))
 exp_name = "credit-card-fraud-retrain"
 if mlflow.get_experiment_by_name(exp_name) is None:
     mlflow.create_experiment(exp_name, artifact_location="mlflow-artifacts:/")
@@ -90,4 +91,4 @@ print(f"{'단계':<20}{'ROC-AUC':>10}{'Recall':>10}{'Precision':>10}")
 for name, m in [("초기(b1)", m1), ("재학습1(b1-2)", m2), ("재학습2(b1-3)", m3)]:
     print(f"{name:<20}{m['roc_auc']:>10.4f}{m['recall']:>10.4f}{m['precision']:>10.4f}")
 
-print("\nMLflow UI: http://localhost:5000  (실험: credit-card-fraud-retrain)")
+print("\nMLflow UI: os.getenv(MLFLOW_URI, http://localhost:5000)  (실험: credit-card-fraud-retrain)")

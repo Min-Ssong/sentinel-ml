@@ -1,5 +1,6 @@
 import pandas as pd
 import joblib
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (precision_score, recall_score, f1_score,
@@ -25,7 +26,7 @@ joblib.dump(scaler, "scaler.pkl")
 scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
 
 # === 2. MLflow 설정 ===
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri(os.getenv("MLFLOW_URI", "http://localhost:5000"))
 exp_name = "credit-card-fraud-final"
 if mlflow.get_experiment_by_name(exp_name) is None:
     mlflow.create_experiment(exp_name, artifact_location="mlflow-artifacts:/")
@@ -63,4 +64,4 @@ with mlflow.start_run(run_name="xgboost-baseline"):
     print(classification_report(y_test, y_pred, digits=4))
     print("기록된 지표:", {k: round(v, 4) for k, v in metrics.items()})
 
-print("MLflow UI 확인: http://localhost:5000")
+print("MLflow UI 확인: os.getenv(MLFLOW_URI, http://localhost:5000)")

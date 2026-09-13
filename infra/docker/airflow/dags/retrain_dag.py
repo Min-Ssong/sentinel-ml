@@ -19,7 +19,7 @@ sys.path.append("/opt/airflow/ml")
 
 ML_DIR = "/opt/airflow/ml"
 CSV_PATH = f"{ML_DIR}/data/creditcard.csv"
-MLFLOW_URI = "http://host.docker.internal:5000"
+MLFLOW_URI = os.getenv("MLFLOW_URI", "http://host.docker.internal:5000")
 EXPERIMENT = "sentinel-retrain-dag-v2"
 MODEL_NAME = "sentinel-fraud-dag"
 

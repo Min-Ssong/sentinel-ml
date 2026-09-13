@@ -178,8 +178,16 @@ cd infra/docker
 docker compose up -d
 docker compose ps      # 5개 서비스 Up 확인
 ```
+### 4) DB 스키마 적용
 
-### 4) Kafka 토픽 생성
+```powershell
+Get-Content docs/sql/schema.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
+```
+
+> `postgres_data` 볼륨은 PC 간 공유되지 않으므로 새 환경에서는 반드시 실행해야 합니다.
+> 누락 시 `Schema-validation: missing table [fraud_results]` 로 API 기동이 실패합니다.
+
+### 5) Kafka 토픽 생성
 
 컨테이너 재시작 시 토픽이 초기화될 수 있으므로, 기동 후 존재 여부를 확인합니다.
 
@@ -192,7 +200,7 @@ docker exec -it sentinel-kafka kafka-topics --create --topic fraud-alerts  --boo
 docker exec -it sentinel-kafka kafka-topics --create --topic dlq           --bootstrap-server localhost:9192 --partitions 1 --replication-factor 1
 ```
 
-### 5) Airflow 실행 (MLOps 재학습 파이프라인)
+### 6) Airflow 실행 (MLOps 재학습 파이프라인)
 
 sentinel 인프라와 **별도 compose**입니다.
 
@@ -206,9 +214,9 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 >
 > 최초 기동 시 apiserver가 수 분간 unhealthy로 표시될 수 있습니다. docker compose logs airflow-apiserver에 오류가 없다면 부팅 중이므로 기다리면 됩니다. (실측: 노트북에서 기동 완료까지 약 30분)
 
-접속: `http://localhost:8281` (`AIRFLOW_PORT`)
+접속: `http://localhost:8291` (`AIRFLOW_PORT`)
 
-### 6) 빌드 및 서비스 실행
+### 7) 빌드 및 서비스 실행
 
 ```bash
 ./gradlew build
@@ -216,7 +224,7 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 ./gradlew :simulator:bootRun --args='--simulator.rate=10 --simulator.fraud-ratio=0.2'
 ```
 
-### 7) FastAPI 추론 서버
+### 8) FastAPI 추론 서버
 
 ```bash
 cd ml
@@ -231,13 +239,17 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8295
 | 서비스 | 기본 포트 | `.env` 키 |
 |---|---|---|
 | MLflow UI | 5000 | `MLFLOW_PORT` |
-| Airflow UI | 8281 | `AIRFLOW_PORT` |
-| Spring API | 8280 | `SPRING_API_PORT` |
+| Airflow UI | 8291 | `AIRFLOW_PORT` |
+| Spring API | 8290 | `SPRING_API_PORT` |
 | FastAPI | 8295 | `FASTAPI_PORT` |
 | Kafka | 9192 | `KAFKA_PORT` |
 | Zookeeper | 2281 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5432 | `POSTGRES_PORT` |
 | Redis | 6379 | `REDIS_PORT` |
+
+> 기본 포트는 `infra/docker/.env`에서 변경할 수 있습니다. Windows 예약 범위는 PC마다,
+> 그리고 시점에 따라 달라지므로 `check-ports.ps1`로 먼저 확인하세요.
+> (실측: 같은 PC에서도 8/22 8004~8203 → 9/13 8182~8281로 변동)
 
 ### ML 파이프라인 (Python)
 

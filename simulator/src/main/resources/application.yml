@@ -2,7 +2,7 @@ spring:
   application:
     name: sentinel-simulator
   kafka:
-    bootstrap-servers: localhost:9192
+    bootstrap-servers: localhost:${KAFKA_PORT:9192}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer

@@ -1,11 +1,12 @@
 import pandas as pd
 import joblib
 import mlflow
+import os
 from fastapi import FastAPI, Header
 from pydantic import BaseModel
 
 # --- 서버 시작 시 1회 로드 (매 요청마다 로드하면 느림) ---
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri(os.getenv("MLFLOW_URI", "http://localhost:5000"))
 model = mlflow.xgboost.load_model("models:/sentinel-fraud/latest")
 scaler = joblib.load("scaler.pkl")
 
