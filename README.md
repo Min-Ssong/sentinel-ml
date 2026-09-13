@@ -156,20 +156,28 @@ cp airflow/.env.example airflow/.env
 `airflow/.env`의 `FERNET_KEY`는 비어 있으므로 직접 생성해 채웁니다.
 
 ```bash
+pip install cryptography
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ### 2) 포트 확인
 
 ```powershell
-.\infra\docker\check-ports.ps1
+cd infra/docker
+powershell -ExecutionPolicy Bypass -File .\check-ports.ps1
 ```
 
-충돌 시 `infra/docker/.env`의 해당 포트 값만 바꾸면 됩니다.
-
-> **한계**: 이 스크립트는 Windows 예약 포트 범위(`netsh interface ipv4 show excludedportrange`)만 검사합니다. 다른 프로세스의 실제 점유 여부는 `netstat -ano | findstr :<포트>` 로 별도 확인이 필요합니다.
+> Windows 예약 포트 범위를 검사합니다. PowerShell 실행 정책이 제한된 환경에서도
+> 위 명령으로 바로 실행됩니다. Git Bash에서도 동일하게 동작합니다.
 >
-> 예약 범위는 PC마다 다릅니다. 실측 예 — 데스크톱: 9051~9150 포함(9092 사용 불가) / 노트북: 미포함. 같은 저장소라도 기계가 바뀌면 포트가 달라지는 이유입니다.
+> **한계**: 예약 범위만 검사하며 다른 프로세스의 실제 점유는 확인하지 않습니다.
+> `netstat -ano | findstr :<포트>` 로 별도 확인이 필요합니다.
+>
+> Windows 외 환경에서는 이 스크립트가 동작하지 않습니다. 포트 충돌 시
+> `infra/docker/.env`의 값을 직접 조정하세요.
+>
+> 예약 범위는 PC마다, 시점에 따라 달라집니다.
+> (실측: 같은 PC에서도 8/22 8004~8203 → 9/13 8182~8281로 변동)
 
 ### 3) 인프라 실행
 

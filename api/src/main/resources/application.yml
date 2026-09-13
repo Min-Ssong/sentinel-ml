@@ -32,10 +32,10 @@
         spring.json.value.default.type: com.sentinel.common.dto.TransactionMessage
 
 server:
-  port: ${SPRING_API_PORT:8290}
+  port: ${SPRING_API_PORT:8490}
 ml:
   server:
-    url: http://localhost:${FASTAPI_PORT:8295}
+    url: http://localhost:${FASTAPI_PORT:8495}
     timeout-ms: 5000
 
 resilience4j:
