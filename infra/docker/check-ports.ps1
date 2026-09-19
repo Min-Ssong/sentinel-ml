@@ -18,6 +18,9 @@ $ports = @{
     "SpringAPI"  = [int]$env_vars["SPRING_API_PORT"]
     "FastAPI"    = [int]$env_vars["FASTAPI_PORT"]
     "Airflow"    = [int]$env_vars["AIRFLOW_PORT"]
+    "Prometheus" = [int]$env_vars["PROMETHEUS_PORT"]
+    "Grafana"    = [int]$env_vars["GRAFANA_PORT"]
+    "Pushgateway"= [int]$env_vars["PUSHGATEWAY_PORT"]
 }
 
 $raw = netsh interface ipv4 show excludedportrange protocol=tcp
