@@ -91,4 +91,4 @@ print(f"{'단계':<20}{'ROC-AUC':>10}{'Recall':>10}{'Precision':>10}")
 for name, m in [("초기(b1)", m1), ("재학습1(b1-2)", m2), ("재학습2(b1-3)", m3)]:
     print(f"{name:<20}{m['roc_auc']:>10.4f}{m['recall']:>10.4f}{m['precision']:>10.4f}")
 
-print("\nMLflow UI: os.getenv(MLFLOW_URI, http://localhost:5000)  (실험: credit-card-fraud-retrain)")
+print(f"\nMLflow UI: {os.getenv('MLFLOW_URI', 'http://localhost:5000')}  (실험: credit-card-fraud-retrain)")

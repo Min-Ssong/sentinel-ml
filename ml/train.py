@@ -64,4 +64,4 @@ with mlflow.start_run(run_name="xgboost-baseline"):
     print(classification_report(y_test, y_pred, digits=4))
     print("기록된 지표:", {k: round(v, 4) for k, v in metrics.items()})
 
-print("MLflow UI 확인: os.getenv(MLFLOW_URI, http://localhost:5000)")
+print(f"\nMLflow UI: {os.getenv('MLFLOW_URI', 'http://localhost:5000')}  (실험: credit-card-fraud-retrain)")
