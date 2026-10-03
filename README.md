@@ -266,7 +266,7 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8495
 | Spring API | 8490 | `SPRING_API_PORT` |
 | FastAPI | 8495 | `FASTAPI_PORT` |
 | Kafka | 9192 | `KAFKA_PORT` |
-| Zookeeper | 2281 | `ZOOKEEPER_PORT` |
+| Zookeeper | 4500 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5432 | `POSTGRES_PORT` |
 | Redis | 6379 | `REDIS_PORT` |
 
