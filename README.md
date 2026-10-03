@@ -17,7 +17,7 @@
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
 - Circuit Breaker + DLQ + Fallback — ML 서버 장애 시에도 거래 처리 중단 없음 (P95 100ms SLA는 k6 검증 예정)
-- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격 (Drift 감지·Shadow Deployment 구현 예정)
+- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격, Drift 모니터링(PSI, Precision/Recall) 구현 (자동 재학습 트리거·Shadow Deployment 구현 예정)
 ---
 
 ## 기술 스택
@@ -30,7 +30,7 @@
 | ML | Python 3.11, FastAPI, XGBoost / LightGBM |
 | MLOps | MLflow 3.15.1, Apache Airflow 3.x |
 | 장애 내성 | Resilience4j (Circuit Breaker, Retry) |
-| 모니터링 | Prometheus, Grafana (예정) |
+| 모니터링 | Prometheus, Grafana |
 | Infra | Docker Compose |
 | DB | PostgreSQL 15 |
 | Test | JUnit 5, Mockito, k6 |
@@ -44,7 +44,7 @@ sentinel-ml/
 ├── common/               # 공통 DTO, 유틸
 │   └── src/main/java/com/sentinel/common/
 │       ├── dto/
-│       │   └── TransactionMessage.java       # Kafka 메시지 계약 (Producer/Consumer 공유)
+│       │   └── TransactionMessage.java       # Kafka 메시지 계약. features(ML 입력 30개), isFraud(정답)
 │       └── util/
 │           └── TransactionIdGenerator.java   # UUID 기반 Transaction ID 생성
 ├── domain/               # JPA Entity, Repository, 도메인 인터페이스
@@ -66,7 +66,7 @@ sentinel-ml/
 │       ├── java/com/sentinel/api/
 │       │   ├── SentinelApplication.java          # Spring Boot 진입점
 │       │   ├── consumer/
-│       │   │   └── TransactionConsumer.java      # Kafka 메시지 수신 → DB 저장
+│       │   │   └── TransactionConsumer.java      # 수신 → Rule → ML 호출 → 저장, 예측 결과 카운터 집계
 │       │   ├── service/
 │       │   │   ├── TransactionService.java
 │       │   │   └── RedisService.java              # Redis Sorted Set / Sliding Window
@@ -78,8 +78,8 @@ sentinel-ml/
 │       │       └── MDCFilter.java                 # Transaction ID MDC 등록/해제
 │       └── resources/
 │           ├── logback-spring.xml                 # 환경별 JSON/텍스트 로그 설정
-│           ├── application.yml
-│           ├── application-local.yml         # git 제외
+│           ├── application.yml                    # 포트·DB 기본값, Actuator(prometheus) 노출
+│           ├── application-local.yml              # git 제외
 │           └── application-local.yml.example
 ├── ml-client/            # FastAPI 추론 서버 WebClient + Circuit Breaker
 │   └── src/main/java/com/sentinel/mlclient/
@@ -89,10 +89,15 @@ sentinel-ml/
 │           └── MlScoreResponse.java
 ├── ml/                   # Python ML 파이프라인
 │   ├── explore.py        # 데이터 탐색 (EDA)
-│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록
+│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록, scaler.pkl 저장
 │   ├── check_split.py    # Time 분할 시 배치별 사기 건수 확인
 │   ├── retrain_sim.py    # 누적 재학습 시뮬레이션
-│   ├── measure_noise.py  # seed 변동에 따른 성능 편차 측정
+│   ├── gate.py           # 성능 게이트: ROC-AUC 기준 champion/challenger 승격 판정
+│   ├── test_gate.py      # gate.py 단위 테스트
+│   ├── drift.py          # Data Drift: PSI 계산 + Pushgateway 전송
+│   ├── check_drift.py    # 재학습 3단계 시나리오별 PSI 검증
+│   ├── check_importance.py  # champion 모델 feature importance 조회 (PSI 대상 피처 선정 근거)
+│   ├── scaler.pkl        # 추론용 스케일러 (train.py가 생성, serving/app.py가 로드)
 │   ├── requirements.txt
 │   ├── serving/
 │   │   └── app.py        # FastAPI 추론 서버
@@ -102,11 +107,11 @@ sentinel-ml/
 │   └── src/main/
 │       ├── java/com/sentinelml/simulator/
 │       │   ├── SimulatorApplication.java  # Spring Boot 진입점
-│       │   ├── SimulatorRunner.java       # CommandLineRunner 기반 produce 루프
+│       │   ├── SimulatorRunner.java       # produce 루프. 사용자 1000명 풀, 고빈도 사기 패턴만 user-001 고정
 │       │   ├── producer/
 │       │   │   └── TransactionProducer.java
 │       │   ├── loader/
-│       │   │   └── CreditCardFeatureLoader.java  # creditcard.csv 피처 로딩
+│       │   │   └── CreditCardFeatureLoader.java  # csv의 holdout 구간(뒤 20%)만 로드, Class별 풀 분리
 │       │   └── config/
 │       │       └── SimulatorProperties.java      # --rate, --fraud-ratio 파라미터
 │       └── resources/
@@ -118,13 +123,22 @@ sentinel-ml/
 │       └── schema.sql                 # PostgreSQL DDL
 ├── infra/
 │   └── docker/
-│       ├── docker-compose.yml
+│       ├── docker-compose.yml         # 기반 5개 + 모니터링 3개 (prometheus, pushgateway, grafana)
 │       ├── Dockerfile.mlflow
 │       ├── check-ports.ps1            # 예약 포트 범위 검사
+│       ├── prometheus/
+│       │   └── prometheus.yml         # scrape 대상: pushgateway, Spring Actuator
+│       ├── grafana/
+│       │   └── dashboards/
+│       │       └── drift.json         # PSI·판정·Recall/Precision 패널
 │       ├── .env                       # git 제외
 │       ├── .env.example
 │       └── airflow/                   # Airflow 별도 compose
 │           ├── docker-compose.yaml
+│           ├── Dockerfile
+│           ├── requirements-airflow.txt
+│           ├── config/
+│           │   └── airflow.cfg
 │           ├── dags/
 │           │   └── retrain_dag.py     # 재학습 DAG
 │           ├── .env                   # git 제외 (FERNET_KEY)
@@ -269,6 +283,9 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8495
 | Zookeeper | 4500 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5432 | `POSTGRES_PORT` |
 | Redis | 6379 | `REDIS_PORT` |
+| Prometheus | 9090 | `PROMETHEUS_PORT` |
+| Pushgateway | 9091 | `PUSHGATEWAY_PORT` |
+| Grafana | 3900 | `GRAFANA_PORT` |
 
 > 기본 포트는 `infra/docker/.env`에서 변경할 수 있습니다. Windows 예약 범위는 PC마다,
 > 그리고 시점에 따라 달라지므로 `check-ports.ps1`로 먼저 확인하세요.
