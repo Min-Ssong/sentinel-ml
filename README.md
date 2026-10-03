@@ -347,7 +347,22 @@ pip install -r requirements.txt
 **Data Leakage 방지 스케일링**
 
 `StandardScaler`를 train 데이터에만 `fit`하고 test에는 `transform`만 적용합니다. test 정보가 전처리 단계에 새어들면 평가 점수가 거짓으로 부풀려지기 때문입니다. V1~V28은 이미 PCA로 스케일된 피처라, 원본 값인 `Amount`·`Time`만 스케일링합니다.
+
+### Drift 모니터링 — 지표 정의와 한계
+
+**Data Drift (PSI)**
+- 기준 분포는 champion 모델의 학습 데이터, 비교 대상은 신규 배치다. 피처는 importance 상위 5개와 Amount를 쓴다.
+- 운영 DB에는 V1~V28이 저장되지 않아, 재학습 DAG와 같은 creditcard.csv 시간 순 배치로 계산한다. 실서비스라면 운영 데이터에서 계산해야 한다.
+
+**Concept Drift (Precision / Recall)**
+- 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값과 비교해 TP/FP/FN/TN을 집계한다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
+- Rule을 통과해 모델이 판단한 거래만 집계한다. Rule 차단과 ML Fallback은 제외한다.
+- 시뮬레이터는 학습에 쓰지 않은 holdout 구간(뒤 20%) 행만 사용한다.
+
+**알아둘 점**: PSI는 csv 배치로, Recall은 시뮬레이터 거래로 계산하므로 두 값은 서로 다른 데이터에서 나온다.
 ---
+
+
 
 ## 설계 문서
 
@@ -386,6 +401,10 @@ pip install -r requirements.txt
 - Airflow 설치 및 재학습 DAG 구현 — 배치 추출 → 학습 → MLflow 등록 → 게이트 판정
 - 게이트 동작 실증: challenger 0.9661 < champion 0.9812 → 승격 차단 / 통과 시 @champion alias 승격 (v12)
 - 누적 재학습 ROC-AUC: 0.9661 → 0.9700 → 0.9824
+
+### 🔄 9월~10월 — Drift 모니터링 (진행 중)
+- Data Drift: PSI 계산 모듈, Pushgateway → Prometheus → Grafana 대시보드
+- Concept Drift: Precision/Recall 실시간 집계 (Micrometer)
 
 ### 🔜 예정
 - Drift 모니터링 (Prometheus + Grafana)
