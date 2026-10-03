@@ -23,15 +23,19 @@ public class CreditCardFeatureLoader {
     private final Random random = new Random();
 
     public void load(String csvPath) {
+        long total = countDataRows(csvPath);
+        long skip = (long) (total * 0.8);       // 앞 80%는 champion 학습 구간 → 건너뜀
         try (BufferedReader reader = Files.newBufferedReader(Path.of(csvPath))) {
             reader.readLine();  // 헤더 스킵
             String line;
+            long rowIdx = 0;
             while ((line = reader.readLine()) != null) {
+                if (rowIdx++ < skip) continue;
                 String[] tokens = line.split(",");
                 int label = Integer.parseInt(unquote(tokens[CLASS_INDEX]));
                 if (label == 1) {
                     fraudFeatures.add(parseFeatures(tokens));
-                } else if (normalFeatures.size() < NORMAL_POOL_CAP) {
+                } else {
                     normalFeatures.add(parseFeatures(tokens));
                 }
             }
@@ -44,6 +48,14 @@ public class CreditCardFeatureLoader {
         }
         System.out.printf("CSV loaded | fraud=%d | normal=%d%n",
                 fraudFeatures.size(), normalFeatures.size());
+    }
+
+    private long countDataRows(String csvPath) {
+        try (var lines = Files.lines(Path.of(csvPath))) {
+            return lines.count() - 1;           // 헤더 제외
+        } catch (IOException e) {
+            throw new UncheckedIOException("creditcard.csv 행 수 계산 실패: " + csvPath, e);
+        }
     }
 
     public List<Double> randomFraud() {

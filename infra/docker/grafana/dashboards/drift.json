@@ -23,6 +23,140 @@
   "panels": [
     {
       "datasource": {
+        "type": "prometheus",
+        "uid": "afyp8172jk7wge"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0.9,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "Value"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(sentinel_ml_predictions_total{outcome=\"tp\"}[5m]))\r\n/\r\n(sum(increase(sentinel_ml_predictions_total{outcome=\"tp\"}[5m]))\r\n + (sum(increase(sentinel_ml_predictions_total{outcome=\"fn\"}[5m])) or vector(0)))",
+          "legendFormat": "Recall",
+          "range": true,
+          "refId": "Recall"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "afyp8172jk7wge"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(sentinel_ml_predictions_total{outcome=\"tp\"}[5m]))\r\n/\r\n(sum(increase(sentinel_ml_predictions_total{outcome=\"tp\"}[5m]))\r\n + (sum(increase(sentinel_ml_predictions_total{outcome=\"fp\"}[5m])) or vector(0)))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Precision",
+          "range": true,
+          "refId": "Precision"
+        }
+      ],
+      "title": "모델 성능 (Recall / Precision, 5분 창)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
         "uid": "afyp8172jk7wge"
       },
       "fieldConfig": {
@@ -68,7 +202,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 8
       },
       "id": 3,
       "options": {
@@ -165,7 +299,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 16
       },
       "id": 2,
       "options": {
@@ -229,7 +363,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "id": 1,
       "options": {
@@ -289,6 +423,6 @@
   "timezone": "browser",
   "title": "New dashboard",
   "uid": "efysmgo7smygwc",
-  "version": 9,
+  "version": 13,
   "weekStart": ""
 }

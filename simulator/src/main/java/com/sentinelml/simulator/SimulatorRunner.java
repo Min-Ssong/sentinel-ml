@@ -21,6 +21,7 @@ public class SimulatorRunner implements CommandLineRunner {
     private final CreditCardFeatureLoader featureLoader;
     private final Random random = new Random();
 
+    private static final int USER_POOL_SIZE = 1000;
     private static final List<String> USER_IDS = List.of(
             "user-001", "user-002", "user-003", "user-004", "user-005");
     private static final List<String> CATEGORIES = List.of(
@@ -57,7 +58,7 @@ public class SimulatorRunner implements CommandLineRunner {
     private TransactionMessage buildNormalTransaction() {
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
-                USER_IDS.get(random.nextInt(USER_IDS.size())),
+                randomUserId(),
                 BigDecimal.valueOf(1000 + random.nextInt(490000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
@@ -96,7 +97,7 @@ public class SimulatorRunner implements CommandLineRunner {
     private TransactionMessage buildHighAmountFraud() {
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
-                USER_IDS.get(random.nextInt(USER_IDS.size())),
+                randomUserId(),
                 BigDecimal.valueOf(5000000 + random.nextInt(5000000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
@@ -112,7 +113,7 @@ public class SimulatorRunner implements CommandLineRunner {
         List<String> foreignCountries = List.of("US", "JP", "CN", "RU");
         return new TransactionMessage(
                 UUID.randomUUID().toString(),
-                USER_IDS.get(random.nextInt(USER_IDS.size())),
+                randomUserId(),
                 BigDecimal.valueOf(100000 + random.nextInt(400000)),
                 CATEGORIES.get(random.nextInt(CATEGORIES.size())),
                 "device-" + random.nextInt(10),
@@ -122,5 +123,10 @@ public class SimulatorRunner implements CommandLineRunner {
                 true,
                 featureLoader.randomFraud()
         );
+    }
+
+    // %04d로 만들어 고빈도 사기용 "user-001"과 문자열이 겹치지 않게 함
+    private String randomUserId() {
+        return String.format("user-%04d", random.nextInt(USER_POOL_SIZE) + 1);
     }
 }
