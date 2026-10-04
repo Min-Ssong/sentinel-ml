@@ -281,7 +281,7 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8495
 | FastAPI | 8495 | `FASTAPI_PORT` |
 | Kafka | 9192 | `KAFKA_PORT` |
 | Zookeeper | 4500 | `ZOOKEEPER_PORT` |
-| PostgreSQL | 5432 | `POSTGRES_PORT` |
+| PostgreSQL | 5800 | `POSTGRES_PORT` |
 | Redis | 6379 | `REDIS_PORT` |
 | Prometheus | 9090 | `PROMETHEUS_PORT` |
 | Pushgateway | 9091 | `PUSHGATEWAY_PORT` |

@@ -1,6 +1,6 @@
 ﻿spring:
   datasource:
-    url: jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/${POSTGRES_DB:sentineldb}
+    url: jdbc:postgresql://localhost:${POSTGRES_PORT:5800}/${POSTGRES_DB:sentineldb}
     username: ${POSTGRES_USER:sentinel}
     password: ${POSTGRES_PASSWORD:sentinel123}
     driver-class-name: org.postgresql.Driver
