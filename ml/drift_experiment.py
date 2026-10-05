@@ -15,9 +15,9 @@ import os
 
 import mlflow
 import pandas as pd
-from sklearn.base import clone
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
 
 from drift import build_baseline, calculate_psi
 
@@ -25,10 +25,9 @@ mlflow.set_tracking_uri(os.getenv("MLFLOW_URI", "http://localhost:5000"))
 
 PSI_FEATURES = ["V14", "V10", "V4", "V12", "V8", "Amount"]  # 판정 DAG 와 동일
 S2_SHIFT_FEATURES = ["V14", "V12", "V10", "V4"]
-S2_ALPHAS = [0.5, 0.75, 0.9]      # 정상 평균 쪽 이동 비율
+S2_ALPHAS = [0.75]               # 정상 평균 쪽 이동 비율 (1차 실험에서 0.75 채택)
 S2_SIGNAL_STD = 3.0               # 새 신호 크기 (정상 표준편차 배수)
-S1_CASES = [("Amount", "scale", 1.5), ("Amount", "scale", 2.0),
-            ("V14", "shift_std", 0.5), ("V14", "shift_std", 1.0)]
+S1_CASES = [("V14", "shift_std", 1.0)]   # 1차 실험에서 채택한 강도
 THRESH = 0.5                      # TransactionConsumer.PREDICTION_THRESHOLD
 
 df = pd.read_csv(os.path.join("data", "creditcard.csv")).sort_values("Time").reset_index(drop=True)
@@ -86,9 +85,21 @@ cand = imp[[c for c in cols if c.startswith("V") and c not in PSI_FEATURES]]
 signal = cand.idxmin()
 print(f"\n=== S2 Concept drift (a, 합성) — 신호 피처 {signal} (champion 중요도 {cand.min():.4f}, 후보 중 최저) ===")
 
-params = champ.get_params()
-shown = {k: params.get(k) for k in ("n_estimators", "max_depth", "learning_rate", "scale_pos_weight", "random_state")}
-print(f"challenger 파라미터 (champion 에서 복제, DAG 값과 같은지 확인 필요): {shown}")
+def dag_model(train):
+    """retrain_dag.py 80~82행과 같은 설정. spw = 음성/양성 비율로 가정 (78~79행 확인 필요)"""
+    y_tr = train["Class"].values
+    spw = (y_tr == 0).sum() / (y_tr == 1).sum()
+    return XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1,
+                         scale_pos_weight=spw, eval_metric="logloss", random_state=42), spw
+
+
+# 재현 확인: 같은 설정으로 학습 풀을 다시 학습하면 champion(AUC 0.9824, 61/75)이 나와야 함
+rm, spw0 = dag_model(train_pool)
+rs = StandardScaler().fit(train_pool[["Amount", "Time"]])
+rm.fit(prep(train_pool, rs), train_pool["Class"].values)
+r_auc, r_rec, r_tp, r_fn = evaluate(rm, rs, holdout)
+print(f"[재현 확인] DAG 설정 재학습 @holdout: AUC={r_auc:.4f} Recall={r_rec:.4f} ({r_tp}/{r_tp + r_fn}), spw={spw0:.2f}"
+      f"  → champion 과 같으면 설정 재현 성공")
 
 
 def s2(d, alpha):
@@ -105,14 +116,14 @@ for a in S2_ALPHAS:
     tr_new = s2(train_pool[train_pool["Class"] == 1], a)   # 학습분: 학습 풀 사기 변형
     train = pd.concat([train_pool, tr_new], ignore_index=True)
     sc = StandardScaler().fit(train[["Amount", "Time"]])
-    ch = clone(champ)
+    ch, spw = dag_model(train)
     ch.fit(prep(train, sc), train["Class"].values)
 
     c_auc, c_rec, c_tp, c_fn = evaluate(champ, champ_scaler, ev)
     n_auc, n_rec, n_tp, n_fn = evaluate(ch, sc, ev)
     o_auc, o_rec, o_tp, o_fn = evaluate(ch, sc, holdout)
     gate = "통과" if n_auc >= c_auc else "차단"
-    print(f"\nalpha={a} (학습분 사기 {len(tr_new)}건 추가)")
+    print(f"\nalpha={a} (학습분 사기 {len(tr_new)}건 추가, spw={spw:.2f})")
     print(f"  champion  @평가분: AUC={c_auc:.4f} Recall={c_rec:.4f} ({c_tp}/{c_tp + c_fn})")
     print(f"  challenger@평가분: AUC={n_auc:.4f} Recall={n_rec:.4f} ({n_tp}/{n_tp + n_fn})  → 게이트(AUC, tol 0) {gate}")
     print(f"  challenger@원본 holdout: AUC={o_auc:.4f} Recall={o_rec:.4f} ({o_tp}/{o_tp + o_fn})  (옛 패턴 유지 확인)")
