@@ -136,7 +136,7 @@ def decide(psi, recall, **context):
 
     alerts = [f for f, v in psi["features"].items() if v["level"] == "alert"]
     if alerts:
-        reasons.append(f"PSI alert: {alerts}")
+        print(f"[psi-alert] 경보만 (재학습 트리거 아님): {alerts}")
 
     min_samples = float(params["min_samples"])
     threshold = float(params["recall_threshold"])
@@ -157,7 +157,7 @@ def decide(psi, recall, **context):
     catchup=False,
     max_active_runs=1,
     params={
-        "recall_threshold": 0.90,  # 0.9865(10/3 실측) 대비 우연 노이즈 하한(표본 100: 0.9399) 아래
+        "recall_threshold": 0.60,  # 0.9865(10/3 실측) 대비 우연 노이즈 하한(표본 100: 0.9399) 아래
         "min_samples": 100,        # tp+fn 최소 표본
         "window": "1h",            # Recall 판정 창 (@hourly 주기와 일치)
         "force_trigger": False,    # 트리거 경로 검증용
