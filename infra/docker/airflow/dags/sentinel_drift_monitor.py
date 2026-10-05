@@ -6,14 +6,20 @@ sentinel_drift_monitor — Drift 판정 DAG
                 ├─> decide ──(True)──> trigger_retrain (sentinel_retrain)
   fetch_recall ─┘
 
-판정 규칙 (2026-10-04 합의안)
-  - PSI: 감시 피처 중 하나라도 level == "alert"(PSI_ALERT 이상)이면 트리거
+판정 규칙 (2026-10-05 변경)
+  - PSI: 경보만. 피처 중 하나라도 level == "alert"(PSI_ALERT 이상)이면 로그([psi-alert])만 남기고
+         재학습은 트리거하지 않는다. (S1 실험: PSI 0.904 에서도 champion 성능 변화 없음)
   - Recall: 판정 창(window) 안의 tp+fn >= min_samples 일 때만 판정,
-            recall < recall_threshold 이면 트리거. 표본 부족은 "보류"(스킵)
+            recall < recall_threshold(0.60) 이면 트리거. 표본 부족은 "보류"(스킵)
   - force_trigger=True 는 트리거 경로 검증용 스위치
 
+PSI 계산 데이터
+  - baseline = 원본 csv 의 학습 풀(Time 정렬 후 앞 80%), current = params.current_csv 의 holdout(뒤 20%)
+  - current_csv 기본값은 원본(creditcard.csv). 드리프트 시나리오 파일은 data/ 아래 파일명으로 지정
+    (예: creditcard_s1.csv). 수동 실행으로 바꾼 값은 다음 스케줄 실행에서 기본값으로 되돌아간다.
+
 스케줄
-  - 오늘은 SCHEDULE=None(수동)으로 검증. 검증 후 "@hourly" 로 변경 (window=1h 와 짝)
+  - @hourly, 판정 창 1h (10/4 표본 수집 속도 측정 기준)
 """
 import json
 import os
@@ -33,7 +39,7 @@ MLFLOW_URI = os.getenv("MLFLOW_URI", "http://host.docker.internal:5000")
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://host.docker.internal:9090")
 PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "host.docker.internal:9091")
 
-# champion 조회용. retrain_dag.py 의 MODEL_NAME 과 같아야 함 (실행 전 대조 필요)
+# champion 조회용. retrain_dag.py 의 MODEL_NAME 과 같아야 함
 MODEL_NAME = os.getenv("MODEL_NAME", "sentinel-fraud-dag")
 
 ML_DIR = "/opt/airflow/ml"  # compose 볼륨 마운트 (../../../ml)
@@ -71,18 +77,26 @@ def _prom_scalar(promql):
 
 
 @task
-def compute_psi():
-    """check_drift.py 마지막 블록과 같은 계산: baseline=학습 풀 전체(b1+b2+b3), current=holdout."""
+def compute_psi(**context):
+    """baseline = 원본 csv 학습 풀, current = params.current_csv 의 holdout (기본: 원본 csv)."""
     import pandas as pd
 
     if ML_DIR not in sys.path:
         sys.path.insert(0, ML_DIR)
     from drift import build_baseline, calculate_psi_batch, push_psi_metrics
 
+    # data/ 아래 파일명만 허용 (경로 문자열을 그대로 쓰지 않음)
+    current_name = os.path.basename(str(context["params"]["current_csv"]))
+    current_path = os.path.join(ML_DIR, "data", current_name)
+
     df = pd.read_csv(DATA_PATH).sort_values("Time").reset_index(drop=True)
-    holdout_start = int(len(df) * 0.8)
-    train_pool = df.iloc[:holdout_start]  # b1+b2+b3 와 동일
-    holdout = df.iloc[holdout_start:].reset_index(drop=True)
+    train_pool = df.iloc[: int(len(df) * 0.8)]  # b1+b2+b3 와 동일
+
+    if current_name == os.path.basename(DATA_PATH):
+        cur = df
+    else:  # 시나리오 파일은 make_drift_files.py 가 Time 안정 정렬 순서로 씀
+        cur = pd.read_csv(current_path).sort_values("Time", kind="stable").reset_index(drop=True)
+    holdout = cur.iloc[int(len(cur) * 0.8):].reset_index(drop=True)
 
     baselines = {f: build_baseline(train_pool[f].values) for f in FEATURES}
     results = calculate_psi_batch(baselines, holdout, FEATURES)
@@ -100,8 +114,9 @@ def compute_psi():
         f: {"psi": round(float(r["psi"]), 4), "level": r["level"]}
         for f, r in results.items()
     }
-    print(f"[psi] model_version={model_version} pushed={pushed} {summary}")
-    return {"model_version": model_version, "pushed": pushed, "features": summary}
+    print(f"[psi] current_csv={current_name} model_version={model_version} pushed={pushed} {summary}")
+    return {"current_csv": current_name, "model_version": model_version,
+            "pushed": pushed, "features": summary}
 
 
 @task
@@ -134,6 +149,7 @@ def decide(psi, recall, **context):
     if params["force_trigger"]:
         reasons.append("force_trigger=True (경로 검증용)")
 
+    # PSI 는 경보만 — 재학습 사유로 쓰지 않는다
     alerts = [f for f, v in psi["features"].items() if v["level"] == "alert"]
     if alerts:
         print(f"[psi-alert] 경보만 (재학습 트리거 아님): {alerts}")
@@ -157,10 +173,13 @@ def decide(psi, recall, **context):
     catchup=False,
     max_active_runs=1,
     params={
-        "recall_threshold": 0.60,  # 0.9865(10/3 실측) 대비 우연 노이즈 하한(표본 100: 0.9399) 아래
+        # 서빙 기준선 약 0.82(10/5 측정, v12)와 S2 시나리오(Recall 0.36) 사이.
+        # 근거: Wilson 95%(n=75) 기준 하한 0.71 / S2 상한 0.47 의 중간
+        "recall_threshold": 0.60,
         "min_samples": 100,        # tp+fn 최소 표본
         "window": "1h",            # Recall 판정 창 (@hourly 주기와 일치)
         "force_trigger": False,    # 트리거 경로 검증용
+        "current_csv": "creditcard.csv",  # PSI 의 현재 데이터 (ml/data/ 아래 파일명)
     },
     tags=["sentinel", "drift"],
 )
