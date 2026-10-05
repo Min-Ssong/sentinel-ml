@@ -3,7 +3,7 @@ sentinel_drift_monitor — Drift 판정 DAG
 
 흐름
   compute_psi  ─┐
-                ├─> decide ──(True)──> trigger_retrain (sentinel_retrain)
+                ├─> decide ──(True)──> trigger_retrain (sentinel_retrain_drift)
   fetch_recall ─┘
 
 판정 규칙 (2026-10-05 변경)
@@ -190,7 +190,7 @@ def sentinel_drift_monitor():
 
     trigger_retrain = TriggerDagRunOperator(
         task_id="trigger_retrain",
-        trigger_dag_id="sentinel_retrain",
+        trigger_dag_id="sentinel_retrain_drift",
         conf={"trigger_source": "sentinel_drift_monitor"},
     )
     go >> trigger_retrain
