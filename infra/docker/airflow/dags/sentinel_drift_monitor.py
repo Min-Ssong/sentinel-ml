@@ -26,7 +26,7 @@ from datetime import datetime
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import dag, task
 
-SCHEDULE = @hourly
+SCHEDULE = "@hourly"
 
 # 컨테이너 -> 호스트 서비스 주소 (retrain_dag.py 의 MLFLOW_URI 와 같은 방식)
 MLFLOW_URI = os.getenv("MLFLOW_URI", "http://host.docker.internal:5000")
