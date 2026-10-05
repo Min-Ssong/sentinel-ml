@@ -17,7 +17,8 @@
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
 - Circuit Breaker + DLQ + Fallback — ML 서버 장애 시에도 거래 처리 중단 없음 (P95 100ms SLA는 k6 검증 예정)
-- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격, Drift 모니터링(PSI, Precision/Recall) 구현 (자동 재학습 트리거·Shadow Deployment 구현 예정)
+- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격, Drift 모니터링(PSI, Precision/Recall), 판정 DAG의 재학습 트리거 연결 (트리거 경로 검증 완료, 실제 드리프트 주입 검증·Shadow Deployment 구현 예정)
+
 ---
 
 ## 기술 스택
@@ -89,7 +90,7 @@ sentinel-ml/
 │           └── MlScoreResponse.java
 ├── ml/                   # Python ML 파이프라인
 │   ├── explore.py        # 데이터 탐색 (EDA)
-│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록, scaler.pkl 저장
+│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록, scaler.pkl 저장 (랜덤 분할)
 │   ├── check_split.py    # Time 분할 시 배치별 사기 건수 확인
 │   ├── retrain_sim.py    # 누적 재학습 시뮬레이션
 │   ├── gate.py           # 성능 게이트: ROC-AUC 기준 champion/challenger 승격 판정
@@ -100,7 +101,7 @@ sentinel-ml/
 │   ├── scaler.pkl        # 추론용 스케일러 (train.py가 생성, serving/app.py가 로드)
 │   ├── requirements.txt
 │   ├── serving/
-│   │   └── app.py        # FastAPI 추론 서버
+│   │   └── app.py        # FastAPI 추론 서버 (현재 models:/sentinel-fraud/latest 로드)
 │   └── data/
 │       └── creditcard.csv  # Credit Card Fraud 데이터셋 (git 제외)
 ├── simulator/            # 트랜잭션 시뮬레이터 (개발/테스트 전용)
@@ -140,7 +141,8 @@ sentinel-ml/
 │           ├── config/
 │           │   └── airflow.cfg
 │           ├── dags/
-│           │   └── retrain_dag.py     # 재학습 DAG
+│           │   ├── retrain_dag.py            # 재학습 DAG (sentinel_retrain)
+│           │   └── sentinel_drift_monitor.py # 판정 DAG: PSI·Recall 판정 후 재학습 트리거 (@hourly)
 │           ├── .env                   # git 제외 (FERNET_KEY)
 │           └── .env.example
 ```
@@ -212,8 +214,9 @@ powershell -ExecutionPolicy Bypass -File .\check-ports.ps1
 ```bash
 cd infra/docker
 docker compose up -d
-docker compose ps      # 5개 서비스 Up 확인
+docker compose ps      # 기반 5개 + 모니터링 3개, 합계 8개 Up 확인
 ```
+
 ### 4) DB 스키마 적용
 
 ```powershell
@@ -250,6 +253,8 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 > 이미지와 메타DB 볼륨은 PC 간 공유되지 않습니다. 다른 PC에서 처음 실행하면 build와 init을 다시 거칩니다. 멈춘 것처럼 보여도 `docker stats`의 BLOCK I/O가 증가 중이면 정상 진행입니다.
 >
 > 최초 기동 시 apiserver가 수 분간 unhealthy로 표시될 수 있습니다. docker compose logs airflow-apiserver에 오류가 없다면 부팅 중이므로 기다리면 됩니다. (실측: 노트북에서 기동 완료까지 약 30분)
+>
+> 새 DAG는 기본 일시정지 상태로 등록됩니다. UI에서 토글을 켜야 스케줄과 트리거가 동작합니다.
 
 접속: `http://localhost:8491` (`AIRFLOW_PORT`)
 
@@ -270,6 +275,7 @@ uvicorn serving.app:app --host 0.0.0.0 --port 8495
 ```
 
 > MLflow 컨테이너가 먼저 떠 있어야 모델 로드에 성공합니다.
+> `ml/` 에서 실행해야 합니다. `scaler.pkl` 을 상대 경로로 읽습니다.
 
 ### 서비스 주소
 
@@ -305,10 +311,10 @@ pip install -r requirements.txt
 | 스크립트 | 역할 |
 |---|---|
 | `explore.py` | 데이터 탐색(EDA) |
-| `train.py` | XGBoost 베이스라인 학습 + MLflow 기록 |
+| `train.py` | XGBoost 베이스라인 학습 + MLflow 기록 (랜덤 분할) |
 | `check_split.py` | Time 기준 배치 분할 시 배치별 사기 건수 확인 |
 | `retrain_sim.py` | 누적 재학습 시뮬레이션 |
-| `measure_noise.py` | seed 변동에 따른 성능 편차 측정 |
+| `check_drift.py` | 재학습 3단계 시나리오별 PSI 검증 |
 | `serving/app.py` | FastAPI 추론 서버 |
 
 ---
@@ -357,9 +363,13 @@ pip install -r requirements.txt
 
 불균형 보정은 XGBoost의 `scale_pos_weight = 정상 수 / 사기 수 ≈ 577`로 사기 클래스에 가중치를 부여하는 방식을 택했습니다. SMOTE 오버샘플링 대신 가중치 방식을 쓴 이유는 간단하고 XGBoost가 네이티브로 지원하기 때문입니다.
 
-**초기 베이스라인(6월, 랜덤 분할 기준)**
-- 결과: ROC-AUC 0.98, 사기 Recall 0.87 (98건 중 85건 탐지)
+**초기 베이스라인 (6월, 랜덤 분할 기준)**
+- 결과: ROC-AUC 0.98, 사기 Recall 0.87 (테스트셋 사기 98건 중 85건 탐지)
 - Precision 0.33은 trade-off입니다 — 가중치를 최대로 줘 Recall을 끌어올린 대가이며, 임계값·가중치 튜닝으로 조정 가능한 베이스라인 수준입니다
+
+**시간 분할 기준 (재학습 DAG champion v12)**
+- Time 순서 뒤 20% holdout 기준: ROC-AUC 0.9824, 사기 Recall 0.81 (75건 중 61건, 임계값 0.5)
+- 시간 분할은 미래 데이터로 평가하므로 랜덤 분할보다 엄격합니다. 두 수치는 평가 방식이 달라 직접 비교하지 않습니다. 사기 표본이 75건으로 작습니다
 
 **Data Leakage 방지 스케일링**
 
@@ -372,14 +382,20 @@ pip install -r requirements.txt
 - 운영 DB에는 V1~V28이 저장되지 않아, 재학습 DAG와 같은 creditcard.csv 시간 순 배치로 계산한다. 실서비스라면 운영 데이터에서 계산해야 한다.
 
 **Concept Drift (Precision / Recall)**
-- 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값과 비교해 TP/FP/FN/TN을 집계한다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
+- 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값(임계값 0.5)과 비교해 TP/FP/FN/TN을 집계한다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
 - Rule을 통과해 모델이 판단한 거래만 집계한다. Rule 차단과 ML Fallback은 제외한다.
-- 시뮬레이터는 학습에 쓰지 않은 holdout 구간(뒤 20%) 행만 사용한다.
+- 시뮬레이터는 재학습 DAG(champion) 학습에 쓰지 않은 holdout 구간(Time 순서 뒤 20%) 행만 사용한다.
 
-**알아둘 점**: PSI는 csv 배치로, Recall은 시뮬레이터 거래로 계산하므로 두 값은 서로 다른 데이터에서 나온다.
+**판정 DAG (`sentinel_drift_monitor`, @hourly)**
+- PSI를 계산해 Pushgateway로 보내고, Prometheus에서 판정 창(1h) 동안의 Recall을 조회한 뒤, 조건을 충족하면 `TriggerDagRunOperator`로 재학습 DAG(`sentinel_retrain`)를 실행한다.
+- 표본(tp+fn)이 최소 기준에 못 미치면 실패가 아니라 "판정 보류"로 처리한다.
+- 트리거 경로는 검증했으나(강제 실행, 임계값 하향), 실제 드리프트로 발동한 적은 아직 없다.
+
+**알아둘 점**
+- PSI는 csv 배치로, Recall은 시뮬레이터 거래로 계산하므로 두 값은 서로 다른 데이터에서 나온다.
+- **현재 서빙 모델(`sentinel-fraud/latest`)은 `train.py`의 랜덤 분할 모델이다.** 시뮬레이터가 보내는 holdout 행의 약 80%가 이 모델의 학습에 포함되어 있어, 시뮬레이터 기준 Recall(약 0.98~0.99)은 부풀려진 값이다. 서빙을 재학습 DAG의 champion으로 전환할 예정이다.
+
 ---
-
-
 
 ## 설계 문서
 
@@ -410,11 +426,11 @@ pip install -r requirements.txt
 ### ✅ 6월 — ML 모델 개발 및 추론 통합
 - FastAPI 추론 서버 구현, Java ↔ Python E2E 연동 검증
 - MDC txId 전 구간 추적 확인 (Simulator → Kafka → Consumer → FastAPI → DB)
-- 실제 점수 확인: 정상 거래 0.005 / 사기 거래 0.999
+- 실제 점수 확인: 정상 거래 0.005 / 사기 거래 0.999 (당시 서빙 모델 `train.py` 랜덤 분할 모델 기준)
 
 ### ✅ 8월 — MLOps 재학습 파이프라인
 - 재학습 데이터 전략: Time 순서 3분할 + 누적 학습, 뒤 20% 고정 holdout
-- 성능 게이트: ROC-AUC 기준, tolerance 0.0 (프로덕션 학습 설정이 결정론적임을 실측으로 확인)
+- 성능 게이트: ROC-AUC 기준, tolerance 0.0 (프로덕션 학습 설정이 동일 환경에서 결정론적임을 실측으로 확인)
 - Airflow 설치 및 재학습 DAG 구현 — 배치 추출 → 학습 → MLflow 등록 → 게이트 판정
 - 게이트 동작 실증: challenger 0.9661 < champion 0.9812 → 승격 차단 / 통과 시 @champion alias 승격 (v12)
 - 누적 재학습 ROC-AUC: 0.9661 → 0.9700 → 0.9824
@@ -422,9 +438,11 @@ pip install -r requirements.txt
 ### 🔄 9월~10월 — Drift 모니터링 (진행 중)
 - Data Drift: PSI 계산 모듈, Pushgateway → Prometheus → Grafana 대시보드
 - Concept Drift: Precision/Recall 실시간 집계 (Micrometer)
+- 판정 DAG(`sentinel_drift_monitor`, @hourly) — PSI·Recall 판정 후 재학습 DAG 트리거 연결, 트리거 경로 검증
 
 ### 🔜 예정
-- Drift 모니터링 (Prometheus + Grafana)
+- 서빙 모델을 재학습 DAG champion(`@champion`) + 전처리 묶음으로 전환
+- 드리프트 주입 시나리오 검증 (감지 → 재학습 → 승격)
 - Shadow Deployment — Champion/Challenger 병행 추론
 - k6 부하 테스트 — P95 < 100ms 검증
 - 장애 시나리오 테스트 (Circuit Breaker / DLQ / Fallback)
