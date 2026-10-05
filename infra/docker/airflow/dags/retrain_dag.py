@@ -104,6 +104,14 @@ def sentinel_retrain():
             mlflow.log_metrics(metrics)
             mlflow.set_tag("stage", stage)
             mlflow.xgboost.log_model(model, name="model")
+            mlflow.log_dict(
+                {
+                    "columns": ["Amount", "Time"],
+                    "mean": scaler.mean_.tolist(),
+                    "scale": scaler.scale_.tolist(),
+                },
+                "scaler/scaler.json",
+            )
 
             print(f"[train_batch:{stage}] rows={len(train_df)} "
                   f"fraud={metrics['train_fraud']} "
