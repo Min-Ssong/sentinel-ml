@@ -17,7 +17,7 @@
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
 - Circuit Breaker + DLQ + Fallback — ML 서버 장애 시에도 거래 처리 중단 없음 (P95 100ms SLA는 k6 검증 예정)
-- MLOps 자동화 — Airflow 재학습 DAG + 성능 게이트 기반 모델 승격, Drift 모니터링(PSI, Precision/Recall), 판정 DAG의 재학습 트리거 연결 (트리거 경로 검증 완료, 실제 드리프트 주입 검증·Shadow Deployment 구현 예정)
+- MLOps 자동화 — 성능 게이트 기반 모델 승격, Drift 모니터링(PSI, Precision/Recall), 판정 DAG → 드리프트 재학습 DAG → 승격 → 서빙 반영 루프 (합성 드리프트 시나리오로 검증. Shadow Deployment 구현 예정)
 
 ---
 
@@ -90,20 +90,26 @@ sentinel-ml/
 │           └── MlScoreResponse.java
 ├── ml/                   # Python ML 파이프라인
 │   ├── explore.py        # 데이터 탐색 (EDA)
-│   ├── train.py          # XGBoost 학습 + MLflow 실험 기록, scaler.pkl 저장 (랜덤 분할)
+│   ├── train.py          # 6월 베이스라인 학습 (랜덤 분할), scaler.pkl 저장
 │   ├── check_split.py    # Time 분할 시 배치별 사기 건수 확인
 │   ├── retrain_sim.py    # 누적 재학습 시뮬레이션
 │   ├── gate.py           # 성능 게이트: ROC-AUC 기준 champion/challenger 승격 판정
 │   ├── test_gate.py      # gate.py 단위 테스트
 │   ├── drift.py          # Data Drift: PSI 계산 + Pushgateway 전송
 │   ├── check_drift.py    # 재학습 3단계 시나리오별 PSI 검증
-│   ├── check_importance.py  # champion 모델 feature importance 조회 (PSI 대상 피처 선정 근거)
-│   ├── scaler.pkl        # 추론용 스케일러 (train.py가 생성, serving/app.py가 로드)
+│   ├── check_importance.py         # champion 모델 feature importance 조회 (PSI 대상 피처 선정 근거)
+│   ├── compare_serving_models.py   # 이전 서빙 모델과 champion 의 holdout 비교 (읽기 전용)
+│   ├── drift_experiment.py         # 드리프트 시나리오 오프라인 실험 (읽기 전용)
+│   ├── make_drift_files.py         # 드리프트 시나리오 csv 생성 + 자체 검증
+│   ├── backfill_champion_scaler.py # scaler 를 저장하지 않던 시기의 champion run 에 scaler.json 보충 (1회성)
+│   ├── scaler.pkl        # train.py 산출물. 현재 서빙은 사용하지 않음
 │   ├── requirements.txt
 │   ├── serving/
-│   │   └── app.py        # FastAPI 추론 서버 (현재 models:/sentinel-fraud/latest 로드)
-│   └── data/
-│       └── creditcard.csv  # Credit Card Fraud 데이터셋 (git 제외)
+│   │   └── app.py        # FastAPI 추론 서버. sentinel-fraud-dag@champion 모델 + 같은 run 의 scaler.json 로드
+│   └── data/             # git 제외
+│       ├── creditcard.csv      # Credit Card Fraud 데이터셋
+│       ├── creditcard_s1.csv   # S1 Data drift 시나리오 (make_drift_files.py 생성)
+│       └── creditcard_s2.csv   # S2 Concept drift 시나리오, 합성 (make_drift_files.py 생성)
 ├── simulator/            # 트랜잭션 시뮬레이터 (개발/테스트 전용)
 │   └── src/main/
 │       ├── java/com/sentinelml/simulator/
@@ -112,9 +118,9 @@ sentinel-ml/
 │       │   ├── producer/
 │       │   │   └── TransactionProducer.java
 │       │   ├── loader/
-│       │   │   └── CreditCardFeatureLoader.java  # csv의 holdout 구간(뒤 20%)만 로드, Class별 풀 분리
+│       │   │   └── CreditCardFeatureLoader.java  # csv의 holdout 구간(파일 순서 뒤 20%)만 로드, Class별 풀 분리
 │       │   └── config/
-│       │       └── SimulatorProperties.java      # --rate, --fraud-ratio 파라미터
+│       │       └── SimulatorProperties.java      # rate, fraud-ratio, csv-path 파라미터
 │       └── resources/
 │           └── application.yml
 ├── docs/
@@ -141,8 +147,9 @@ sentinel-ml/
 │           ├── config/
 │           │   └── airflow.cfg
 │           ├── dags/
-│           │   ├── retrain_dag.py            # 재학습 DAG (sentinel_retrain)
-│           │   └── sentinel_drift_monitor.py # 판정 DAG: PSI·Recall 판정 후 재학습 트리거 (@hourly)
+│           │   ├── retrain_dag.py            # sentinel_retrain: Time 3분할 누적 재학습 (수동)
+│           │   ├── sentinel_drift_monitor.py # 판정 DAG (@hourly): PSI 경보, Recall 판정, 쿨다운, 재학습 트리거
+│           │   └── retrain_drift_dag.py      # sentinel_retrain_drift: 드리프트 대응 재학습 (판정 DAG가 호출)
 │           ├── .env                   # git 제외 (FERNET_KEY)
 │           └── .env.example
 ```
@@ -240,7 +247,7 @@ docker exec -it sentinel-kafka kafka-topics --create --topic fraud-alerts  --boo
 docker exec -it sentinel-kafka kafka-topics --create --topic dlq           --bootstrap-server localhost:9192 --partitions 1 --replication-factor 1
 ```
 
-### 6) Airflow 실행 (MLOps 재학습 파이프라인)
+### 6) Airflow 실행 (MLOps 파이프라인)
 
 sentinel 인프라와 **별도 compose**입니다.
 
@@ -254,7 +261,13 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 >
 > 최초 기동 시 apiserver가 수 분간 unhealthy로 표시될 수 있습니다. docker compose logs airflow-apiserver에 오류가 없다면 부팅 중이므로 기다리면 됩니다. (실측: 노트북에서 기동 완료까지 약 30분)
 >
-> 새 DAG는 기본 일시정지 상태로 등록됩니다. UI에서 토글을 켜야 스케줄과 트리거가 동작합니다.
+> 새 DAG는 기본 일시정지 상태로 등록됩니다. `sentinel_drift_monitor`, `sentinel_retrain_drift` 는 일시정지를 해제해야 스케줄과 트리거가 동작합니다. 트리거 대상 DAG가 일시정지 상태면 트리거 시 오류가 납니다.
+>
+> ```powershell
+> docker exec airflow-airflow-worker-1 airflow dags unpause sentinel_drift_monitor
+> docker exec airflow-airflow-worker-1 airflow dags unpause sentinel_retrain_drift
+> docker exec airflow-airflow-worker-1 airflow dags list   # is_paused 확인
+> ```
 
 접속: `http://localhost:8491` (`AIRFLOW_PORT`)
 
@@ -266,16 +279,25 @@ docker compose up -d      # 최초 init 15분 이상 소요될 수 있음
 ./gradlew :simulator:bootRun --args='--simulator.rate=10 --simulator.fraud-ratio=0.2'
 ```
 
+> 드리프트 시나리오로 보내려면 csv 경로를 지정합니다 (먼저 `ml/make_drift_files.py` 로 생성).
+> 경로는 시뮬레이터 모듈 기준 상대 경로이며 기본값은 `../ml/data/creditcard.csv` 입니다.
+>
+> ```bash
+> ./gradlew :simulator:bootRun --args='--simulator.rate=10 --simulator.fraud-ratio=0.5 --simulator.csv-path=../ml/data/creditcard_s2.csv'
+> ```
+
 ### 8) FastAPI 추론 서버
 
 ```bash
 cd ml
 .venv\Scripts\Activate.ps1
 uvicorn serving.app:app --host 0.0.0.0 --port 8495
+curl http://localhost:8495/model-info    # 로드한 모델 버전·run 확인
 ```
 
 > MLflow 컨테이너가 먼저 떠 있어야 모델 로드에 성공합니다.
-> `ml/` 에서 실행해야 합니다. `scaler.pkl` 을 상대 경로로 읽습니다.
+> 서빙은 기동 시 `sentinel-fraud-dag@champion` 을 1회 조회해, 그 버전의 모델과 같은 run 의 `scaler/scaler.json` 을 함께 로드합니다.
+> **champion 이 바뀌면 재기동해야 반영됩니다.** (환경변수 `SERVING_MODEL_NAME`, `SERVING_MODEL_ALIAS` 로 대상 변경 가능)
 
 ### 서비스 주소
 
@@ -311,10 +333,14 @@ pip install -r requirements.txt
 | 스크립트 | 역할 |
 |---|---|
 | `explore.py` | 데이터 탐색(EDA) |
-| `train.py` | XGBoost 베이스라인 학습 + MLflow 기록 (랜덤 분할) |
+| `train.py` | 6월 XGBoost 베이스라인 학습 + MLflow 기록 (랜덤 분할) |
 | `check_split.py` | Time 기준 배치 분할 시 배치별 사기 건수 확인 |
 | `retrain_sim.py` | 누적 재학습 시뮬레이션 |
 | `check_drift.py` | 재학습 3단계 시나리오별 PSI 검증 |
+| `compare_serving_models.py` | 이전 서빙 모델과 champion 의 holdout 성능 비교 |
+| `drift_experiment.py` | 드리프트 시나리오(S1·S2) 오프라인 실험 |
+| `make_drift_files.py` | 드리프트 시나리오 csv 생성 + 자체 검증 (MLflow 필요) |
+| `backfill_champion_scaler.py` | champion run 에 scaler.json 보충 (기본 dry-run, `--apply` 시 업로드) |
 | `serving/app.py` | FastAPI 추론 서버 |
 
 ---
@@ -375,25 +401,63 @@ pip install -r requirements.txt
 
 `StandardScaler`를 train 데이터에만 `fit`하고 test에는 `transform`만 적용합니다. test 정보가 전처리 단계에 새어들면 평가 점수가 거짓으로 부풀려지기 때문입니다. V1~V28은 이미 PCA로 스케일된 피처라, 원본 값인 `Amount`·`Time`만 스케일링합니다.
 
+### 서빙 모델 — 재학습 champion + 전처리 묶음
+
+- **변경 전**: 서빙이 `train.py` 의 랜덤 분할 모델(`sentinel-fraud/latest`)을 로드했다. 시뮬레이터가 보내는 holdout 행의 약 80%가 이 모델의 학습에 포함되어 있어, 시뮬레이터 기준 Recall(약 0.98~0.99)은 **누수로 부풀려진 값**이었다. 재학습 DAG가 champion 을 바꿔도 서빙에는 반영되지 않았다.
+- **변경 후**: 서빙이 재학습 DAG의 `sentinel-fraud-dag@champion` 을 로드한다. 재학습 DAG는 학습 run 에 scaler 를 `scaler/scaler.json`(mean, scale)으로 함께 저장하고, 서빙은 같은 run 에서 읽는다.
+    - pickle 대신 JSON: DAG(Airflow 컨테이너)와 서빙(로컬 venv)의 scikit-learn 버전이 다를 수 있어 버전과 무관한 형식을 택했다. 변환식 `(x - mean) / scale` 은 StandardScaler.transform 과 같다.
+    - scaler 저장 이전에 만든 champion(v12)에는 재현한 scaler 를 보충했다. 재현값으로 계산한 holdout AUC 가 기록값과 전체 자릿수까지 일치(차이 0)했고, 기존 `scaler.pkl` 은 2.8e-05 달랐다.
+- **서빙 기준선 (v12, 시뮬레이터 5분 창)**: Recall 0.8198 (표본 870.57). 오프라인 holdout 0.8133(61/75)과 같은 수준. 서빙만 바꿨을 때 Recall 이 약 0.17 내려가 누수 설명과 일치했다.
+
 ### Drift 모니터링 — 지표 정의와 한계
 
 **Data Drift (PSI)**
 - 기준 분포는 champion 모델의 학습 데이터, 비교 대상은 신규 배치다. 피처는 importance 상위 5개와 Amount를 쓴다.
 - 운영 DB에는 V1~V28이 저장되지 않아, 재학습 DAG와 같은 creditcard.csv 시간 순 배치로 계산한다. 실서비스라면 운영 데이터에서 계산해야 한다.
+- 판정 DAG의 `current_csv` 파라미터로 비교 대상을 시나리오 파일의 holdout 으로 바꿀 수 있다 (기본값은 원본).
 
 **Concept Drift (Precision / Recall)**
 - 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값(임계값 0.5)과 비교해 TP/FP/FN/TN을 집계한다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
 - Rule을 통과해 모델이 판단한 거래만 집계한다. Rule 차단과 ML Fallback은 제외한다.
 - 시뮬레이터는 재학습 DAG(champion) 학습에 쓰지 않은 holdout 구간(Time 순서 뒤 20%) 행만 사용한다.
+- **Precision 주의**: 시뮬레이터 사기 비율(예: 0.5)이 실제(약 0.13%)보다 훨씬 높아 Grafana 의 Precision 은 현실보다 높게 나온다 (예: 시뮬레이터 0.997, 오프라인 전체 holdout 0.314). 시뮬레이터 설정과 함께만 인용한다.
 
 **판정 DAG (`sentinel_drift_monitor`, @hourly)**
-- PSI를 계산해 Pushgateway로 보내고, Prometheus에서 판정 창(1h) 동안의 Recall을 조회한 뒤, 조건을 충족하면 `TriggerDagRunOperator`로 재학습 DAG(`sentinel_retrain`)를 실행한다.
-- 표본(tp+fn)이 최소 기준에 못 미치면 실패가 아니라 "판정 보류"로 처리한다.
-- 트리거 경로는 검증했으나(강제 실행, 임계값 하향), 실제 드리프트로 발동한 적은 아직 없다.
+- **PSI 는 경보만**: alert(0.2 이상) 피처가 있으면 로그만 남기고 재학습하지 않는다. 오프라인 실험에서 PSI 0.904 의 데이터 드리프트에도 champion 성능이 변하지 않아, PSI 단독 재학습은 불필요한 학습·교체를 낳는다고 판단했다.
+- **재학습 트리거 = Recall < 0.60** (판정 창 1h, 최소 표본 tp+fn 100). 0.60 은 서빙 기준선(Wilson 95% 하한 0.71, n=75)과 드리프트 시나리오(상한 0.47)의 중간으로 잡은 설계 선택이다. 사기 75행 반복 추출이라 구간은 낙관적이다.
+- 표본이 부족하면 실패가 아니라 "판정 보류"로 처리한다.
+- **쿨다운(보류 조건)**: ① 서빙 버전(`/model-info`)이 `@champion` 과 다르면 "서빙 반영 대기" ② 서빙·MLflow 조회 실패 ③ 마지막 드리프트 재학습 후 2시간(`cooldown_hours`) 미만. 서빙이 기동 시 1회만 로드하기 때문에, 재기동 전까지 옛 모델의 낮은 Recall 로 재학습이 반복되는 것을 막는다.
+- 트리거 대상은 드리프트 재학습 DAG(`sentinel_retrain_drift`).
+
+**드리프트 재학습 DAG (`sentinel_retrain_drift`)**
+- 기존 `sentinel_retrain`(3단계 누적 재연)은 그대로 두고, 목적이 다른 재학습을 별도 DAG로 분리했다.
+- 학습 = 원본 학습 풀 + 드리프트 파일 학습 구간의 사기 행, 평가 = 드리프트 파일 holdout. 원본 holdout 성능도 함께 기록한다.
+- 게이트: champion 도 **같은 평가 데이터로 다시 평가**해 비교한다 (champion run 에 기록된 옛 평가셋 점수와 비교하면 서로 다른 시험지 점수를 비교하게 됨).
+
+**드리프트 시나리오 (`make_drift_files.py`)**
+
+| 시나리오 | 변형 | PSI | champion holdout Recall |
+|---|---|---|---|
+| S1 Data drift | holdout 전체 행의 V14 를 +1.0σ 이동 | V14 0.904 (alert) | 0.8133 (변화 없음) |
+| S2 Concept drift (**합성**) | 사기 행의 V14·V12·V10·V4 를 정상 평균 쪽으로 75% 이동 + V2 에 +3σ 신호 | 거의 변화 없음 (V12 0.154) | 0.36 (27/75) |
+
+- S2 는 실제 사기 패턴 변화가 아니라 루프 검증용 합성 시나리오다. 사기 행만 바뀌는 변화는 전체 분포 기반 PSI 에 거의 잡히지 않고 Recall 에서 드러난다.
+
+**루프 검증 (S2, 시뮬레이터 rate=10·fraud-ratio=0.5, 5분 창)**
+
+| 단계 | 결과 |
+|---|---|
+| 드리프트 주입 후 (서빙 v12) | Recall 0.3737 |
+| 판정 DAG | Recall < 0.60 → `sentinel_retrain_drift` 트리거 (임계값 조정·강제 실행 없음) |
+| 재학습·게이트 | challenger 평가분 AUC 0.9986 (Recall 0.96) vs champion 재평가 0.9408 → 통과, 승격 |
+| 서빙 재기동 후 | Recall 0.9542 |
+
+- 새 모델의 원본 holdout Recall 은 0.8267 로, 새 패턴을 배우면서 옛 패턴을 잃지 않았다 (n=75 소표본).
+- 한계: 라벨 즉시 도착 가정, 재학습용 "새 데이터"가 파일로 고정된 시뮬레이션, 서빙 반영은 수동 재기동.
 
 **알아둘 점**
-- PSI는 csv 배치로, Recall은 시뮬레이터 거래로 계산하므로 두 값은 서로 다른 데이터에서 나온다.
-- **현재 서빙 모델(`sentinel-fraud/latest`)은 `train.py`의 랜덤 분할 모델이다.** 시뮬레이터가 보내는 holdout 행의 약 80%가 이 모델의 학습에 포함되어 있어, 시뮬레이터 기준 Recall(약 0.98~0.99)은 부풀려진 값이다. 서빙을 재학습 DAG의 champion으로 전환할 예정이다.
+- 기본 상태에서 PSI 는 csv 배치로, Recall 은 시뮬레이터 거래로 계산하므로 두 값은 서로 다른 데이터에서 나온다. 드리프트 시나리오에서는 같은 파일을 `current_csv` 와 시뮬레이터 `csv-path` 로 지정해 맞춘다.
+- PSI baseline 은 원본 학습 풀로 고정되어 있어, champion 이 바뀌어도 baseline 은 따라가지 않는다.
 
 ---
 
@@ -438,11 +502,14 @@ pip install -r requirements.txt
 ### 🔄 9월~10월 — Drift 모니터링 (진행 중)
 - Data Drift: PSI 계산 모듈, Pushgateway → Prometheus → Grafana 대시보드
 - Concept Drift: Precision/Recall 실시간 집계 (Micrometer)
-- 판정 DAG(`sentinel_drift_monitor`, @hourly) — PSI·Recall 판정 후 재학습 DAG 트리거 연결, 트리거 경로 검증
+- 판정 DAG(`sentinel_drift_monitor`, @hourly) — PSI 경보, Recall 판정, 쿨다운
+- 서빙을 재학습 champion + 전처리 묶음 로드로 전환 (누수 모델 교체)
+- 드리프트 재학습 DAG(`sentinel_retrain_drift`) — champion 재평가 게이트
+- 합성 드리프트(S2)로 감지 → 재학습 → 승격 → 서빙 반영 → Recall 회복 루프 검증 (0.37 → 0.95)
 
 ### 🔜 예정
-- 서빙 모델을 재학습 DAG champion(`@champion`) + 전처리 묶음으로 전환
-- 드리프트 주입 시나리오 검증 (감지 → 재학습 → 승격)
 - Shadow Deployment — Champion/Challenger 병행 추론
+- 서빙 자동 재로드 (현재 champion 변경 시 재기동)
+- PSI baseline 을 champion 학습 데이터와 연동
 - k6 부하 테스트 — P95 < 100ms 검증
 - 장애 시나리오 테스트 (Circuit Breaker / DLQ / Fallback)
