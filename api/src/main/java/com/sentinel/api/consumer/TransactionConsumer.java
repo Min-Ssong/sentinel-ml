@@ -4,6 +4,7 @@ import com.sentinel.common.dto.TransactionMessage;
 import com.sentinel.domain.entity.Transaction;
 import com.sentinel.domain.rule.FraudScoreResult;
 import com.sentinel.domain.rule.RuleEvaluator;
+import com.sentinel.api.service.ModelMetadataService;
 import com.sentinel.api.service.TransactionService;
 import com.sentinel.api.service.RedisService;
 import com.sentinel.mlclient.MlScoreClient;
@@ -16,31 +17,32 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import io.micrometer.core.instrument.MeterRegistry;
 
+import java.util.Optional;
+
 @Component
 public class TransactionConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionConsumer.class);
-    private static final double BLOCK_THRESHOLD = 0.8;
-    private static final double REVIEW_THRESHOLD = 0.5;
-    // 학습 시 predict() 기본 임계값과 동일. 운영 지표를 오프라인 성능과 비교하기 위한 기준
-    private static final double PREDICTION_THRESHOLD = 0.5;
 
     private final TransactionService transactionService;
     private final RedisService redisService;
     private final RuleEvaluator ruleEvaluator;
     private final MlScoreClient mlScoreClient;
     private final MeterRegistry meterRegistry;
+    private final ModelMetadataService modelMetadataService;
 
     public TransactionConsumer(TransactionService transactionService,
                                RedisService redisService,
                                RuleEvaluator ruleEvaluator,
                                MlScoreClient mlScoreClient,
-                               MeterRegistry meterRegistry) {
+                               MeterRegistry meterRegistry,
+                               ModelMetadataService modelMetadataService) {
         this.transactionService = transactionService;
         this.redisService = redisService;
         this.ruleEvaluator = ruleEvaluator;
         this.mlScoreClient = mlScoreClient;
         this.meterRegistry = meterRegistry;
+        this.modelMetadataService = modelMetadataService;
     }
 
     @KafkaListener(topics = "transactions", groupId = "sentinel-group")
@@ -66,9 +68,11 @@ public class TransactionConsumer {
             );
 
             String status;
+            double score = -1.0;
+            Optional<Long> championModelId = Optional.empty();
 
             if (ruleResult.blocked()) {
-                // Rule Engine 차단 → ML 호출 불필요
+                // Rule Engine 차단 → ML 호출 불필요 (판단한 모델이 없으므로 FRAUD_RESULTS 저장 안 함)
                 status = "BLOCKED";
                 log.info("Transaction blocked by rule | txId={} | rule={} | reason={}",
                         message.transactionId(), ruleResult.triggeredRule(), ruleResult.reason());
@@ -79,20 +83,22 @@ public class TransactionConsumer {
                 );
 
                 MlScoreResponse mlResponse = mlScoreClient.score(mlRequest);
-                double score = mlResponse.fraudScore();
+                score = mlResponse.fraudScore();
                 if (score < 0) {
-                    // Fallback 발생 (ML 서버 다운)
+                    // Fallback 발생 (ML 서버 다운) → FRAUD_RESULTS 저장 안 함
                     status = "PENDING";
                     log.warn("ML fallback applied | txId={} | status=PENDING",
                             message.transactionId());
                 } else {
                     recordOutcome(score, message.isFraud());
-                    if (score >= BLOCK_THRESHOLD) {
-                        status = "BLOCKED";
-                    } else if (score >= REVIEW_THRESHOLD) {
-                        status = "REVIEW";
-                    } else {
-                        status = "APPROVED";
+                    status = ScoreDecision.decide(score);
+                    // 트랜잭션 밖에서 조회·등록 (ModelMetadataService 주석 참고)
+                    championModelId = modelMetadataService.resolveId(
+                            mlResponse.modelName(), mlResponse.modelVersion(), mlResponse.runId());
+                    if (championModelId.isEmpty()) {
+                        meterRegistry.counter("sentinel.ml.result.skipped", "role", "champion").increment();
+                        log.warn("Champion result not saved: no model info in response | txId={}",
+                                message.transactionId());
                     }
                 }
 
@@ -101,7 +107,11 @@ public class TransactionConsumer {
             }
 
             Transaction transaction = toEntity(message, status);
-            transactionService.save(transaction);
+            if (championModelId.isPresent()) {
+                transactionService.saveWithChampionResult(transaction, championModelId.get(), score, status);
+            } else {
+                transactionService.save(transaction);
+            }
 
         } catch (Exception e) {
             log.error("Transaction processing failed | txId={} | error={}",
@@ -113,11 +123,8 @@ public class TransactionConsumer {
     }
 
     private void recordOutcome(double fraudScore, boolean actualFraud) {
-        boolean predictedFraud = fraudScore >= 0.5;
-        String outcome = predictedFraud
-                ? (actualFraud ? "tp" : "fp")
-                : (actualFraud ? "fn" : "tn");
-        meterRegistry.counter("sentinel.ml.predictions", "outcome", outcome).increment();
+        meterRegistry.counter("sentinel.ml.predictions",
+                "outcome", ScoreDecision.outcome(fraudScore, actualFraud)).increment();
     }
 
     private Transaction toEntity(TransactionMessage message, String status) {
