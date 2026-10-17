@@ -11,15 +11,20 @@ sentinel_drift_monitor — Drift 판정 DAG
          재학습은 트리거하지 않는다. (S1 실험: PSI 0.904 에서도 champion 성능 변화 없음)
   - Recall: 판정 창(window) 안의 tp+fn >= min_samples 일 때만 판정,
             recall < recall_threshold(0.60) 이면 트리거 후보. 표본 부족은 "보류"(스킵)
-  - 보류 조건(쿨다운) — 하나라도 해당하면 트리거 후보여도 트리거하지 않는다
+  - 보류 조건 — 하나라도 해당하면 트리거 후보여도 트리거하지 않는다
+    [고정 보류] force_trigger 로도 풀 수 없음 (2026-10-17 변경)
       1) 서빙 버전(FastAPI /model-info) != registry @champion  → 서빙 반영 대기 (재기동 필요)
          측정 중인 모델과 champion 이 다르면 Recall 판정이 의미 없음
       2) 서빙 또는 MLflow 조회 실패 → 판정 근거 없음
-      3) 마지막 드리프트 재학습 run 시작 후 cooldown_hours(기본 2) 미만
       4) @challenger 가 있음 → 챌린저 검증 중 (2026-10-09, SD7). 승격 또는 폐기(promote_challenger.py) 후 재개
          검증 중에 재학습이 또 돌면 비교 대상 챌린저가 바뀌어 Shadow 비교가 무의미해짐
+    [시간 보류] force_trigger 로 우회 가능
+      3) 마지막 드리프트 재학습 run 시작 후 cooldown_hours(기본 2) 미만
          재기동 직후 판정 창(1h)에 이전 트래픽이 섞여 재트리거되는 것을 방지 (창의 2배로 잡은 설계 선택)
-  - force_trigger=True 는 트리거 경로 검증용 스위치 (보류 조건 무시)
+  - force_trigger=True 는 트리거 경로 검증용 스위치. Recall 조건과 시간 보류만 우회한다.
+    2026-10-17 변경 전에는 모든 보류를 무시했고, 수동 실행 폼에 남은 값으로 두 번 사고가 남
+    (10/5 cooldown_hours=0 → 의도치 않은 승격, 10/14 force_trigger=True → 챌린저 검증 중 v15 가 v16 으로 교체)
+  - 실행 파라미터가 기본값(DEFAULT_PARAMS)과 다르면 [warn] 로그를 남긴다 (수동 실행 폼 잔류값 확인용)
 
 PSI 계산 데이터
   - baseline = 원본 csv 의 학습 풀(Time 정렬 후 앞 80%), current = params.current_csv 의 holdout(뒤 20%)
@@ -58,6 +63,18 @@ DATA_PATH = os.path.join(ML_DIR, "data", "creditcard.csv")
 # check_drift.py 와 동일한 감시 피처
 FEATURES = ["V14", "V10", "V4", "V12", "V8", "Amount"]
 
+# DAG params 기본값. decide 가 실행값과 비교해 다르면 [warn] 로그를 남긴다
+DEFAULT_PARAMS = {
+    # 서빙 기준선 약 0.82(10/5 측정, v12)와 S2 시나리오(Recall 0.36) 사이.
+    # 근거: Wilson 95%(n=75) 기준 하한 0.71 / S2 상한 0.47 의 중간
+    "recall_threshold": 0.60,
+    "min_samples": 100,        # tp+fn 최소 표본
+    "window": "1h",            # Recall 판정 창 (@hourly 주기와 일치)
+    "cooldown_hours": 2,       # 직전 드리프트 재학습 후 보류 시간 (판정 창의 2배)
+    "force_trigger": False,    # 트리거 경로 검증용 (Recall 조건·쿨다운만 우회, 고정 보류는 우회 불가)
+    "current_csv": "creditcard.csv",  # PSI 의 현재 데이터 (ml/data/ 아래 파일명)
+}
+
 
 def _champion_version():
     """@champion alias 의 버전을 'v12' 형태로 반환. 실패 시 'unknown'."""
@@ -87,22 +104,31 @@ def _prom_scalar(promql):
 
 
 def _hold_reasons(cd, cooldown_hours):
-    """check_cooldown 결과로 보류 사유 목록을 만든다. 비어 있으면 보류 없음."""
-    holds = []
+    """check_cooldown 결과로 보류 사유를 (고정 보류, 시간 보류) 두 목록으로 나눠 반환한다.
+
+    고정 보류: 모델 상태가 판정에 맞지 않음 → force_trigger 로도 풀지 않는다.
+    시간 보류: 쿨다운 → force_trigger 로 우회할 수 있다.
+    """
+    hard, soft = [], []
     if cd["serving_version"] is None:
-        holds.append("서빙 버전 조회 실패")
+        hard.append("서빙 버전 조회 실패")
     elif cd["champion_version"] is None:
-        holds.append("champion 조회 실패")
+        hard.append("champion 조회 실패")
     elif cd["serving_version"] != cd["champion_version"]:
-        holds.append(f"서빙 반영 대기: 서빙 v{cd['serving_version']} != champion v{cd['champion_version']} "
-                     f"(FastAPI 재기동 필요)")
+        hard.append(f"서빙 반영 대기: 서빙 v{cd['serving_version']} != champion v{cd['champion_version']} "
+                    f"(FastAPI 재기동 필요)")
     if cd.get("challenger_version") is not None:
-        holds.append(f"챌린저 검증 중: @challenger v{cd['challenger_version']} "
-                     f"(promote_challenger.py 로 승격 또는 폐기 후 재개)")
+        hard.append(f"챌린저 검증 중: @challenger v{cd['challenger_version']} "
+                    f"(promote_challenger.py 로 승격 또는 폐기 후 재개)")
     age = cd["last_drift_age_h"]
     if age is not None and age < cooldown_hours:
-        holds.append(f"쿨다운: 직전 드리프트 재학습 {age}h 전 < {cooldown_hours}h")
-    return holds
+        soft.append(f"쿨다운: 직전 드리프트 재학습 {age}h 전 < {cooldown_hours}h")
+    return hard, soft
+
+
+def _param_diffs(params):
+    """기본값과 다른 실행 파라미터 {이름: (기본값, 실행값)}. 수동 실행 폼 잔류값을 로그로 드러내기 위함."""
+    return {k: (v, params.get(k)) for k, v in DEFAULT_PARAMS.items() if params.get(k) != v}
 
 
 @task
@@ -213,6 +239,11 @@ def decide(psi, recall, cooldown, **context):
     params = context["params"]
     reasons = []
 
+    diffs = _param_diffs(params)
+    if diffs:
+        print(f"[warn] 기본값과 다른 실행 파라미터 (이름: 기본값 -> 실행값): "
+              f"{ {k: f'{d} -> {r}' for k, (d, r) in diffs.items()} }")
+
     # PSI 는 경보만 — 재학습 사유로 쓰지 않는다
     alerts = [f for f, v in psi["features"].items() if v["level"] == "alert"]
     if alerts:
@@ -226,7 +257,8 @@ def decide(psi, recall, cooldown, **context):
     else:
         print(f"[hold] Recall 판정 보류: 표본 {recall['samples']} < 최소 {min_samples}")
 
-    holds = _hold_reasons(cooldown, float(params["cooldown_hours"]))
+    hard, soft = _hold_reasons(cooldown, float(params["cooldown_hours"]))
+    holds = hard + soft
     if reasons and holds:
         print(f"[hold] 트리거 조건 충족했으나 보류: {holds} (조건: {reasons})")
         reasons = []
@@ -234,7 +266,11 @@ def decide(psi, recall, cooldown, **context):
         print(f"[cooldown-state] 현재 보류 상태(트리거 조건은 미충족): {holds}")
 
     if params["force_trigger"]:
-        reasons.append("force_trigger=True (경로 검증용, 보류 조건 무시)")
+        if hard:  # 고정 보류는 강제 실행으로도 풀지 않는다 (2026-10-17)
+            print(f"[hold] force_trigger=True 이지만 고정 보류라 트리거하지 않음: {hard}")
+        else:
+            reasons.append("force_trigger=True (경로 검증용, Recall 조건·쿨다운만 우회)"
+                           + (f", 우회한 보류: {soft}" if soft else ""))
 
     print(f"[decide] trigger={bool(reasons)} reasons={reasons}")
     return bool(reasons)
@@ -246,16 +282,7 @@ def decide(psi, recall, cooldown, **context):
     start_date=datetime(2026, 10, 1),
     catchup=False,
     max_active_runs=1,
-    params={
-        # 서빙 기준선 약 0.82(10/5 측정, v12)와 S2 시나리오(Recall 0.36) 사이.
-        # 근거: Wilson 95%(n=75) 기준 하한 0.71 / S2 상한 0.47 의 중간
-        "recall_threshold": 0.60,
-        "min_samples": 100,        # tp+fn 최소 표본
-        "window": "1h",            # Recall 판정 창 (@hourly 주기와 일치)
-        "cooldown_hours": 2,       # 직전 드리프트 재학습 후 보류 시간 (판정 창의 2배)
-        "force_trigger": False,    # 트리거 경로 검증용 (보류 조건 무시)
-        "current_csv": "creditcard.csv",  # PSI 의 현재 데이터 (ml/data/ 아래 파일명)
-    },
+    params=dict(DEFAULT_PARAMS),
     tags=["sentinel", "drift"],
 )
 def sentinel_drift_monitor():
