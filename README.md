@@ -55,13 +55,15 @@ sentinel-ml/
 │       │   ├── Transaction.java        # 거래 원본 데이터
 │       │   ├── FraudResults.java       # 사기 탐지 판단 결과 (N:1)
 │       │   ├── ModelMetadata.java      # ML 모델 이력 (모델명+버전 유일)
-│       │   └── ModelRole.java          # CHAMPION / CHALLENGER (FRAUD_RESULTS.ROLE)
+│       │   ├── ModelRole.java          # CHAMPION / CHALLENGER (FRAUD_RESULTS.ROLE)
+│       │   └── TransactionLabel.java   # 거래 정답 라벨 (비교 리포트 기준값, 거래와 분리)
 │       ├── model/
 │       │   └── FraudDetectionResult.java  # 최종 탐지 결과 도메인 모델
 │       ├── repository/
 │       │   ├── TransactionRepository.java
 │       │   ├── FraudResultsRepository.java
-│       │   └── ModelMetadataRepository.java
+│       │   ├── ModelMetadataRepository.java
+│       │   └── TransactionLabelRepository.java
 │       └── rule/
 │           ├── RuleEvaluator.java         # Rule Engine 인터페이스
 │           ├── RedisRuleEvaluator.java    # Redis 기반 규칙 평가 구현체
@@ -137,7 +139,8 @@ sentinel-ml/
 │   ├── kafka-topic-design.md          # Kafka 토픽 설계 문서
 │   └── sql/
 │       ├── schema.sql                 # PostgreSQL DDL
-│       └── migration_2026-10-09_shadow_results.sql  # 기존 DB용: FRAUD_RESULTS.ROLE, 유일 제약, 인덱스
+│       ├── migration_2026-10-09_shadow_results.sql   # 기존 DB용: FRAUD_RESULTS.ROLE, 유일 제약, 인덱스
+│       └── migration_2026-10-17_transaction_labels.sql # 기존 DB용: TRANSACTION_LABELS
 ├── infra/
 │   └── docker/
 │       ├── docker-compose.yml         # 기반 5개 + 모니터링 3개 (prometheus, pushgateway, grafana)
@@ -247,10 +250,11 @@ Get-Content ..\..\docs\sql\schema.sql | docker exec -i sentinel-postgres psql -U
 > `postgres_data` 볼륨은 PC 간 공유되지 않으므로 새 환경에서는 반드시 실행해야 합니다.
 > 누락 시 `Schema-validation: missing table [fraud_results]` 로 API 기동이 실패합니다.
 >
-> 2026-10-09 이전에 만든 DB는 Shadow 저장용 변경을 따로 적용해야 합니다 (`ROLE` 컬럼이 없으면 API 기동 실패).
+> 이전에 만든 DB는 아래 변경을 날짜 순서대로 따로 적용해야 합니다 (`ROLE` 컬럼이나 `TRANSACTION_LABELS` 가 없으면 API 기동 실패).
 >
 > ```powershell
 > Get-Content ..\..\docs\sql\migration_2026-10-09_shadow_results.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
+> Get-Content ..\..\docs\sql\migration_2026-10-17_transaction_labels.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
 > ```
 
 ### 5) Kafka 토픽 생성
@@ -429,6 +433,8 @@ pip install -r requirements.txt
 - `FRAUD_RESULTS → TRANSACTIONS`: N:1 관계 — Shadow Deployment에서 Champion/Challenger 두 모델이 동일 거래에 각각 판단을 내리므로 거래 1건에 판단 결과 2건 생성 가능
 - `FRAUD_RESULTS.ROLE` (`CHAMPION`/`CHALLENGER`): 같은 모델 버전이 챌린저였다가 승격 후 챔피언이 되므로 `MODEL_ID` 만으로는 역할을 구분할 수 없음 (2026-10-09 추가)
 - `MODEL_METADATA (MODEL_NAME, VERSION)` 유일: 서빙 응답의 모델명·버전으로 행을 찾거나 만들기 때문
+- `TRANSACTION_LABELS` 분리 (2026-10-17): 정답 라벨(사기 여부)은 실제로는 차지백·고객 신고 등으로 거래보다 늦게 도착하므로 거래 테이블에 넣지 않고 별도 테이블로 둔다. 지금은 시뮬레이터 정답을 즉시 저장(`LABEL_SOURCE = SIMULATOR`)하지만 구조는 지연 도착을 표현할 수 있다. 룰 차단 거래도 저장한다
+- 시각 컬럼: `TRANSACTION_LABELS.LABELED_AT` 은 `TIMESTAMPTZ`. 나머지 테이블의 `TIMESTAMP` 컬럼은 애플리케이션이 KST `LocalDateTime` 으로 채우고 DB 세션은 UTC 라 `now()` 기준 쿼리가 어긋난다 → `TIMESTAMPTZ` 로 전환 예정
 - `AMOUNT`: DECIMAL(15,2) — Double 부동소수점 오차 방지, 금융 정밀도 필수
 - `IP_ADDRESS`: VARCHAR(45) — IPv4-mapped IPv6 최대 길이(45자) 수용
 
@@ -470,8 +476,8 @@ pip install -r requirements.txt
 
 - **변경 전**: 서빙이 `train.py` 의 랜덤 분할 모델(`sentinel-fraud/latest`)을 로드했다. 시뮬레이터가 보내는 holdout 행의 약 80%가 이 모델의 학습에 포함되어 있어, 시뮬레이터 기준 Recall(약 0.98~0.99)은 **누수로 부풀려진 값**이었다. 재학습 DAG가 champion 을 바꿔도 서빙에는 반영되지 않았다.
 - **변경 후**: 서빙이 재학습 DAG의 `sentinel-fraud-dag@champion` 을 로드한다. 재학습 DAG는 학습 run 에 scaler 를 `scaler/scaler.json`(mean, scale)으로 함께 저장하고, 서빙은 같은 run 에서 읽는다.
-    - pickle 대신 JSON: DAG(Airflow 컨테이너)와 서빙(로컬 venv)의 scikit-learn 버전이 다를 수 있어 버전과 무관한 형식을 택했다. 변환식 `(x - mean) / scale` 은 StandardScaler.transform 과 같다.
-    - scaler 저장 이전에 만든 champion(v12)에는 재현한 scaler 를 보충했다. 재현값으로 계산한 holdout AUC 가 기록값과 전체 자릿수까지 일치(차이 0)했고, 기존 `scaler.pkl` 은 2.8e-05 달랐다.
+  - pickle 대신 JSON: DAG(Airflow 컨테이너)와 서빙(로컬 venv)의 scikit-learn 버전이 다를 수 있어 버전과 무관한 형식을 택했다. 변환식 `(x - mean) / scale` 은 StandardScaler.transform 과 같다.
+  - scaler 저장 이전에 만든 champion(v12)에는 재현한 scaler 를 보충했다. 재현값으로 계산한 holdout AUC 가 기록값과 전체 자릿수까지 일치(차이 0)했고, 기존 `scaler.pkl` 은 2.8e-05 달랐다.
 - **서빙 기준선 (v12, 시뮬레이터 5분 창)**: Recall 0.8198 (표본 870.57). 오프라인 holdout 0.8133(61/75)과 같은 수준. 서빙만 바꿨을 때 Recall 이 약 0.17 내려가 누수 설명과 일치했다.
 
 ### Drift 모니터링 — 지표 정의와 한계
@@ -482,7 +488,7 @@ pip install -r requirements.txt
 - 판정 DAG의 `current_csv` 파라미터로 비교 대상을 시나리오 파일의 holdout 으로 바꿀 수 있다 (기본값은 원본).
 
 **Concept Drift (Precision / Recall)**
-- 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값(임계값 0.5)과 비교해 TP/FP/FN/TN을 집계한다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
+- 시뮬레이터가 정답(csv의 Class)을 메시지에 함께 싣고, Consumer가 예측값(임계값 0.5)과 비교해 TP/FP/FN/TN을 집계한다. 정답은 `TRANSACTION_LABELS` 에도 저장되어(10/17~) DB에서 같은 거래 기준으로 다시 계산할 수 있다. 실서비스에서는 확정 레이블이 며칠 뒤 도착하므로 지연 평가 구조가 필요하다.
 - Rule을 통과해 모델이 판단한 거래만 집계한다. Rule 차단과 ML Fallback은 제외한다.
 - 시뮬레이터는 재학습 DAG(champion) 학습에 쓰지 않은 holdout 구간(Time 순서 뒤 20%) 행만 사용한다.
 - **Precision 주의**: 시뮬레이터 사기 비율(예: 0.5)이 실제(약 0.13%)보다 훨씬 높아 Grafana 의 Precision 은 현실보다 높게 나온다 (예: 시뮬레이터 0.997, 오프라인 전체 holdout 0.314). 시뮬레이터 설정과 함께만 인용한다.
@@ -492,8 +498,8 @@ pip install -r requirements.txt
 - **재학습 트리거 = Recall < 0.60** (판정 창 1h, 최소 표본 tp+fn 100). 0.60 은 서빙 기준선(Wilson 95% 하한 0.71, n=75)과 드리프트 시나리오(상한 0.47)의 중간으로 잡은 설계 선택이다. 사기 75행 반복 추출이라 구간은 낙관적이다.
 - 표본이 부족하면 실패가 아니라 "판정 보류"로 처리한다.
 - **보류 조건**: 트리거 조건을 충족해도 아래 중 하나라도 해당하면 트리거하지 않는다.
-    - 고정 보류 (`force_trigger` 로도 풀 수 없음): ① 서빙 버전(`/model-info`)이 `@champion` 과 다르면 "서빙 반영 대기" ② 서빙·MLflow 조회 실패 ③ `@challenger` 가 있으면 "챌린저 검증 중" (검증 중에 재학습이 또 돌면 비교 대상이 바뀜)
-    - 시간 보류 (`force_trigger` 로 우회 가능): ④ 마지막 드리프트 재학습 후 2시간(`cooldown_hours`) 미만. 서빙이 기동 시 1회만 로드하기 때문에, 재기동 전까지 옛 모델의 낮은 Recall 로 재학습이 반복되는 것을 막는다.
+  - 고정 보류 (`force_trigger` 로도 풀 수 없음): ① 서빙 버전(`/model-info`)이 `@champion` 과 다르면 "서빙 반영 대기" ② 서빙·MLflow 조회 실패 ③ `@challenger` 가 있으면 "챌린저 검증 중" (검증 중에 재학습이 또 돌면 비교 대상이 바뀜)
+  - 시간 보류 (`force_trigger` 로 우회 가능): ④ 마지막 드리프트 재학습 후 2시간(`cooldown_hours`) 미만. 서빙이 기동 시 1회만 로드하기 때문에, 재기동 전까지 옛 모델의 낮은 Recall 로 재학습이 반복되는 것을 막는다.
 - `force_trigger` 는 트리거 경로 검증용으로 Recall 조건과 시간 보류만 우회한다. 수동 실행 폼에 시험용 값(`cooldown_hours=0`, `force_trigger=True`)이 남은 채 실행된 사고가 두 번 있어(10/5 의도치 않은 승격, 10/14 검증 중 챌린저 교체) 10/17 에 고정 보류는 우회할 수 없게 바꿨다. 실행 파라미터가 기본값과 다르면 `[warn]` 로그를 남긴다.
 - 트리거 대상은 드리프트 재학습 DAG(`sentinel_retrain_drift`).
 - 운영 주의: 드리프트 트래픽(S2)을 흘린 뒤 판정 DAG 를 일시정지했다가 재개하면, 밀려 있던 스케줄 실행이 1시간 창 안의 드리프트 구간을 보고 재학습할 수 있다. 시험 후에는 판정 창(1h)이 지난 뒤 재개한다.
@@ -575,9 +581,9 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 ```
 
 **한계**
-- DB 에 정답 라벨이 없어 DB 만으로는 Recall 을 계산할 수 없습니다 (Recall 은 Prometheus 지표로 비교). 불일치 거래가 실제 사기인지도 DB 로는 알 수 없습니다.
+- 10/17 이전 거래에는 정답 라벨이 없어, 위 검증 결과(10/7~10/17)의 Recall 은 Prometheus 지표 기준입니다. 이후 거래는 `TRANSACTION_LABELS` 로 DB 에서 같은 거래끼리 비교할 수 있습니다 (첫 확인: 챔피언 v12 Recall 291/358 = 0.8128, 원본 데이터).
 - 서빙이 alias 를 기동 시 1회만 읽어 승격·폐기 후 재기동이 필요합니다.
-- `FRAUD_RESULTS.CREATED_AT` 은 KST 로 찍히는데 DB 시간대는 UTC 입니다. 애플리케이션이 로컬 시각을 넣는 것으로 추정(코드 미확인)하며, `now()` 기준 시간 조건 쿼리는 어긋날 수 있습니다 (정리 예정).
+- `FRAUD_RESULTS.CREATED_AT` 은 Spring Auditing 이 KST `LocalDateTime` 으로 채우고 DB 세션은 UTC 라, `now()` 기준 시간 조건 쿼리가 9시간 어긋납니다 (`TIMESTAMPTZ` 전환 예정).
 
 ---
 
@@ -629,9 +635,11 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 - Shadow Deployment — 챌린저 서빙·별도 consumer group·지표 분리, `FRAUD_RESULTS` 거래별 저장(모델 버전·역할), 드리프트 재학습은 `@challenger` 등록, 수동 승격·폐기·롤백 스크립트
 - Shadow 비교 → 수동 승격 → 회복 → 롤백 검증 (0.35 vs 0.96 → 승격 후 0.96 → v12 복귀)
 - 운영 안전장치: 판정 DAG `force_trigger` 가 고정 보류를 우회하지 못하게, 기본값과 다른 파라미터 경고, `transactions` 3파티션 재생성과 자동 생성 기본 파티션 3
+- 비교 리포트 준비: 거래 정답 라벨 저장 (`TRANSACTION_LABELS`, `TIMESTAMPTZ`)
 
 ### 🔜 예정
-- Champion/Challenger 비교 리포트 (정답 라벨 저장 여부 결정, `CREATED_AT` 시간대 정리)
+- Champion/Challenger 비교 리포트 (`ml/report_shadow.py`, 같은 거래 기준 Recall/Precision·불일치 분석)
+- 시각 컬럼 `TIMESTAMPTZ` + `Instant` 전환
 - 서빙 자동 재로드 (현재 alias 변경 시 재기동)
 - PSI baseline 을 champion 학습 데이터와 연동
 - k6 부하 테스트 — P95 < 100ms 검증 (ML 호출 타임아웃 설정 5000ms → SLA 기준 재검토 포함)
