@@ -145,7 +145,7 @@ def push_psi_metrics(results, gateway_url, job="sentinel_drift",
 
     Args:
         results (dict): calculate_psi_batch() 결과
-        gateway_url (str): 예) "localhost:9091"
+        gateway_url (str): 예) "localhost:9291"
         job (str): Prometheus job 라벨
         model_version (str | None): 기준이 된 champion 버전
     """

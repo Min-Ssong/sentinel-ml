@@ -311,8 +311,8 @@ curl http://localhost:8495/model-info    # 로드한 모델 버전·run 확인
 | Zookeeper | 4500 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5800 | `POSTGRES_PORT` |
 | Redis | 6379 | `REDIS_PORT` |
-| Prometheus | 9090 | `PROMETHEUS_PORT` |
-| Pushgateway | 9091 | `PUSHGATEWAY_PORT` |
+| Prometheus | 9290 | `PROMETHEUS_PORT` |
+| Pushgateway | 9291 | `PUSHGATEWAY_PORT` |
 | Grafana | 3900 | `GRAFANA_PORT` |
 
 > 기본 포트는 `infra/docker/.env`에서 변경할 수 있습니다. Windows 예약 범위는 PC마다,

@@ -44,8 +44,8 @@ SCHEDULE = "@hourly"
 
 # 컨테이너 -> 호스트 서비스 주소 (retrain_dag.py 의 MLFLOW_URI 와 같은 방식)
 MLFLOW_URI = os.getenv("MLFLOW_URI", "http://host.docker.internal:5000")
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://host.docker.internal:9090")
-PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "host.docker.internal:9091")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://host.docker.internal:9290")
+PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "host.docker.internal:9291")
 SERVING_URL = os.getenv("SERVING_URL", "http://host.docker.internal:8495")
 
 # champion 조회용. retrain_dag.py 의 MODEL_NAME 과 같아야 함

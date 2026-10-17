@@ -31,7 +31,7 @@ from mlflow.tracking import MlflowClient
 
 MODEL_NAME = os.getenv("SERVING_MODEL_NAME", "sentinel-fraud-dag")
 MLFLOW_URI = os.getenv("MLFLOW_URI", "http://localhost:5000")
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9290")
 
 
 def alias_version(client, alias):
