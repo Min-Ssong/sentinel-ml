@@ -1,4 +1,4 @@
-﻿# Sentinel-ML port check
+# Sentinel-ML port check
 # Windows reserved port ranges change on reboot / WSL restart.
 # Run this BEFORE starting containers.
 
@@ -9,6 +9,9 @@ Get-Content $envPath | Where-Object { $_ -match "^\s*[^#].*=" } | ForEach-Object
     $env_vars[$k.Trim()] = $v.Trim()
 }
 
+# Challenger serving (Shadow, uvicorn on host). Not a container; default matches application.yml
+$challengerPort = if ($env_vars["FASTAPI_CHALLENGER_PORT"]) { [int]$env_vars["FASTAPI_CHALLENGER_PORT"] } else { 8496 }
+
 $ports = @{
     "Kafka"      = [int]$env_vars["KAFKA_PORT"]
     "Zookeeper"  = [int]$env_vars["ZOOKEEPER_PORT"]
@@ -17,6 +20,7 @@ $ports = @{
     "MLflow"     = [int]$env_vars["MLFLOW_PORT"]
     "SpringAPI"  = [int]$env_vars["SPRING_API_PORT"]
     "FastAPI"    = [int]$env_vars["FASTAPI_PORT"]
+    "Challenger" = $challengerPort
     "Airflow"    = [int]$env_vars["AIRFLOW_PORT"]
     "Prometheus" = [int]$env_vars["PROMETHEUS_PORT"]
     "Grafana"    = [int]$env_vars["GRAFANA_PORT"]
@@ -55,7 +59,8 @@ foreach ($name in $ports.Keys) {
 Write-Host ""
 if ($conflict -gt 0) {
     Write-Host "$conflict conflict(s). Change ports before starting containers." -ForegroundColor Red
-    Write-Host "Update: docker-compose.yml + application.yml (api, simulator)"
+    Write-Host "Update: infra/docker/.env (+ .env.example, README service table)."
+    Write-Host "        Host-side defaults may also need changes: application.yml (api, simulator), DAG/ml script URLs."
 } else {
     Write-Host "All clear. Safe to start containers." -ForegroundColor Green
 }
