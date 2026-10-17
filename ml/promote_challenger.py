@@ -120,9 +120,24 @@ def main():
 
     print("\n[적용 후]")
     status(client, args.window)
-    print("\n[다음] 챔피언 서빙(8495) 재기동. @challenger 가 없어졌다면 챌린저 서빙(8496)은 기동할 수 없으므로 끄고,\n"
-          "       API 는 --shadow.enabled=false 로 재기동(켜 두면 sentinel_ml_shadow_fallback 만 증가).\n"
-          "       판정 DAG 는 '서빙 반영 대기'로 보류하다가 재기동 후 재개된다.")
+    print("\n[다음]\n" + "\n".join(f"  - {s}" for s in next_steps(args.action)))
+
+
+def next_steps(action):
+    """적용 후 사람이 할 일. 서빙은 기동 시 alias 를 1회만 읽으므로 alias 가 바뀐 쪽만 재기동한다."""
+    restart_champion = ("챔피언 서빙(8495) 재기동 → /model-info 버전 확인 "
+                        "(창에 SERVING_MODEL_ALIAS 가 남아 있으면 Remove-Item Env:SERVING_MODEL_ALIAS)")
+    stop_challenger = ("챌린저 서빙(8496) 종료 — @challenger 가 없어 다시 기동할 수 없음. "
+                       "API 는 --shadow.enabled=false 로 재기동 (켜 두면 sentinel_ml_shadow_fallback 만 증가)")
+    if action == "promote":
+        return [restart_champion, stop_challenger,
+                "판정 DAG 는 재기동 전까지 '서빙 반영 대기'로 보류, 재기동 후 재개"]
+    if action == "reject":
+        return ["챔피언은 바뀌지 않음 → 챔피언 서빙 재기동 불필요", stop_challenger,
+                "판정 DAG 의 '챌린저 검증 중' 보류가 풀림 → 다음 판정에서 Recall < 임계값이면 재학습이 다시 트리거될 수 있음"]
+    return [restart_champion,  # rollback
+            "판정 DAG 는 재기동 전까지 '서빙 반영 대기'로 보류, 재기동 후 재개",
+            "드리프트 트래픽(S2 등)이 계속 흐르면 되돌린 챔피언의 Recall 이 낮아 재학습이 트리거될 수 있음 → 시험이면 시뮬레이터 먼저 종료"]
 
 
 if __name__ == "__main__":
