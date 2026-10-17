@@ -3,8 +3,10 @@ package com.sentinel.api.service;
 import com.sentinel.domain.entity.FraudResults;
 import com.sentinel.domain.entity.ModelRole;
 import com.sentinel.domain.entity.Transaction;
+import com.sentinel.domain.entity.TransactionLabel;
 import com.sentinel.domain.repository.FraudResultsRepository;
 import com.sentinel.domain.repository.ModelMetadataRepository;
+import com.sentinel.domain.repository.TransactionLabelRepository;
 import com.sentinel.domain.repository.TransactionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,31 +20,36 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final FraudResultsRepository fraudResultsRepository;
     private final ModelMetadataRepository modelMetadataRepository;
+    private final TransactionLabelRepository transactionLabelRepository;
 
     public TransactionService(TransactionRepository transactionRepository,
                               FraudResultsRepository fraudResultsRepository,
-                              ModelMetadataRepository modelMetadataRepository) {
+                              ModelMetadataRepository modelMetadataRepository,
+                              TransactionLabelRepository transactionLabelRepository) {
         this.transactionRepository = transactionRepository;
         this.fraudResultsRepository = fraudResultsRepository;
         this.modelMetadataRepository = modelMetadataRepository;
+        this.transactionLabelRepository = transactionLabelRepository;
     }
 
-    /** 룰 차단·Fallback 등 모델 판단 결과가 없는 거래 */
+    /** 룰 차단·Fallback 등 모델 판단 결과가 없는 거래. 정답 라벨은 함께 저장 */
     @Transactional
-    public void save(Transaction transaction) {
-        transactionRepository.save(transaction);
-        log.info("Transaction saved | transactionId={}", transaction.getTransactionId());
+    public void save(Transaction transaction, boolean isFraud) {
+        Transaction saved = transactionRepository.save(transaction);
+        saveLabel(saved, isFraud);
+        log.info("Transaction saved | transactionId={}", saved.getTransactionId());
     }
 
     /**
-     * 거래 + 챔피언 판단 결과를 한 트랜잭션으로 저장 (DB4).
-     * 거래만 저장되고 결과가 빠지는 상태가 생기지 않는다.
+     * 거래 + 정답 라벨 + 챔피언 판단 결과를 한 트랜잭션으로 저장 (DB4, R1).
+     * 거래만 저장되고 결과·라벨이 빠지는 상태가 생기지 않는다.
      */
     @Transactional
-    public void saveWithChampionResult(Transaction transaction, long modelId,
+    public void saveWithChampionResult(Transaction transaction, boolean isFraud, long modelId,
                                        double mlScore, String finalDecision) {
         // ID 를 직접 지정하는 엔티티라 save() 는 merge 로 동작 → 반환된 관리 대상 인스턴스를 참조에 사용
         Transaction saved = transactionRepository.save(transaction);
+        saveLabel(saved, isFraud);
         fraudResultsRepository.save(FraudResults.of(
                 saved, modelMetadataRepository.getReferenceById(modelId),
                 ModelRole.CHAMPION, mlScore, finalDecision));
@@ -62,5 +69,14 @@ public class TransactionService {
 
     public boolean exists(String transactionId) {
         return transactionRepository.existsById(transactionId);
+    }
+
+    // 같은 메시지가 재전달되면 거래는 merge 로 덮어쓰지만 라벨은 PK 중복이 되므로 이미 있으면 건너뜀
+    private void saveLabel(Transaction saved, boolean isFraud) {
+        if (transactionLabelRepository.existsById(saved.getTransactionId())) {
+            return;
+        }
+        transactionLabelRepository.save(
+                TransactionLabel.of(saved, isFraud, TransactionLabel.SOURCE_SIMULATOR));
     }
 }
