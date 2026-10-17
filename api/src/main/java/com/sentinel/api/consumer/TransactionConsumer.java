@@ -106,11 +106,13 @@ public class TransactionConsumer {
                         message.transactionId(), mlResponse.fraudScore(), status);
             }
 
+            // 정답 라벨(isFraud)은 룰 차단·Fallback 거래도 함께 저장 (R1, 비교 리포트 기준값)
             Transaction transaction = toEntity(message, status);
             if (championModelId.isPresent()) {
-                transactionService.saveWithChampionResult(transaction, championModelId.get(), score, status);
+                transactionService.saveWithChampionResult(transaction, message.isFraud(),
+                        championModelId.get(), score, status);
             } else {
-                transactionService.save(transaction);
+                transactionService.save(transaction, message.isFraud());
             }
 
         } catch (Exception e) {

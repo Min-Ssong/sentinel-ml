@@ -1,0 +1,16 @@
+-- 2026-10-17: 거래 정답 라벨 테이블 (Champion/Challenger 비교 리포트용, R1)
+-- 기존 DB에 적용. 새 DB는 schema.sql 에 포함되어 있음.
+-- 이전 거래에는 라벨이 없다 (메시지에만 있고 저장하지 않았음 → 보충 불가).
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS TRANSACTION_LABELS (
+    TRANSACTION_ID  VARCHAR(36)  NOT NULL,
+    IS_FRAUD        BOOLEAN      NOT NULL,
+    LABEL_SOURCE    VARCHAR(20)  NOT NULL,              -- SIMULATOR (지금은 시뮬레이터 정답만)
+    LABELED_AT      TIMESTAMPTZ  NOT NULL DEFAULT NOW(), -- 라벨 도착 시각 (시간대 포함)
+
+    CONSTRAINT PK_TRANSACTION_LABELS PRIMARY KEY (TRANSACTION_ID),
+    CONSTRAINT FK_LABEL_TRANSACTION FOREIGN KEY (TRANSACTION_ID) REFERENCES TRANSACTIONS(TRANSACTION_ID)
+);
+
+COMMIT;
