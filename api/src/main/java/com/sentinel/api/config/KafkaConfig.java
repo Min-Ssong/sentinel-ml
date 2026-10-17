@@ -56,4 +56,22 @@ public class KafkaConfig {
         factory.setCommonErrorHandler(errorHandler);
         return factory;
     }
+
+    /**
+     * Shadow 전용 리스너 팩토리.
+     * 재시도 0회, DLQ 라우팅 없음 — 실패 레코드는 로그만 남기고 건너뛴다.
+     * 운영 팩토리(kafkaListenerContainerFactory)의 3회 재시도 + dlq 라우팅을 공유하면
+     * 챌린저 장애가 운영 DLQ 를 오염시키기 때문에 분리한다.
+     */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, Object> shadowKafkaListenerContainerFactory(
+            ConsumerFactory<String, Object> consumerFactory) {
+        ConcurrentKafkaListenerContainerFactory<String, Object> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(0L, 0L)));
+        factory.setConcurrency(3);
+        return factory;
+    }
+
 }

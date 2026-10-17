@@ -16,6 +16,8 @@ sentinel_drift_monitor — Drift 판정 DAG
          측정 중인 모델과 champion 이 다르면 Recall 판정이 의미 없음
       2) 서빙 또는 MLflow 조회 실패 → 판정 근거 없음
       3) 마지막 드리프트 재학습 run 시작 후 cooldown_hours(기본 2) 미만
+      4) @challenger 가 있음 → 챌린저 검증 중 (2026-10-09, SD7). 승격 또는 폐기(promote_challenger.py) 후 재개
+         검증 중에 재학습이 또 돌면 비교 대상 챌린저가 바뀌어 Shadow 비교가 무의미해짐
          재기동 직후 판정 창(1h)에 이전 트래픽이 섞여 재트리거되는 것을 방지 (창의 2배로 잡은 설계 선택)
   - force_trigger=True 는 트리거 경로 검증용 스위치 (보류 조건 무시)
 
@@ -42,8 +44,8 @@ SCHEDULE = "@hourly"
 
 # 컨테이너 -> 호스트 서비스 주소 (retrain_dag.py 의 MLFLOW_URI 와 같은 방식)
 MLFLOW_URI = os.getenv("MLFLOW_URI", "http://host.docker.internal:5000")
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://host.docker.internal:9090")
-PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "host.docker.internal:9091")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://host.docker.internal:9290")
+PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "host.docker.internal:9291")
 SERVING_URL = os.getenv("SERVING_URL", "http://host.docker.internal:8495")
 
 # champion 조회용. retrain_dag.py 의 MODEL_NAME 과 같아야 함
@@ -94,6 +96,9 @@ def _hold_reasons(cd, cooldown_hours):
     elif cd["serving_version"] != cd["champion_version"]:
         holds.append(f"서빙 반영 대기: 서빙 v{cd['serving_version']} != champion v{cd['champion_version']} "
                      f"(FastAPI 재기동 필요)")
+    if cd.get("challenger_version") is not None:
+        holds.append(f"챌린저 검증 중: @challenger v{cd['challenger_version']} "
+                     f"(promote_challenger.py 로 승격 또는 폐기 후 재개)")
     age = cd["last_drift_age_h"]
     if age is not None and age < cooldown_hours:
         holds.append(f"쿨다운: 직전 드리프트 재학습 {age}h 전 < {cooldown_hours}h")
@@ -169,7 +174,8 @@ def check_cooldown():
     """보류 조건 판단용 상태 수집: 서빙 버전, champion 버전, 마지막 드리프트 재학습 경과 시간."""
     import time
 
-    out = {"serving_version": None, "champion_version": None, "last_drift_age_h": None, "errors": []}
+    out = {"serving_version": None, "champion_version": None, "challenger_version": None,
+           "last_drift_age_h": None, "errors": []}
 
     try:
         with urllib.request.urlopen(f"{SERVING_URL}/model-info", timeout=5) as resp:
@@ -184,6 +190,10 @@ def check_cooldown():
         mlflow.set_tracking_uri(MLFLOW_URI)
         client = MlflowClient()
         out["champion_version"] = str(client.get_model_version_by_alias(MODEL_NAME, "champion").version)
+        try:  # alias 가 없으면 예외 → 검증 중인 챌린저 없음
+            out["challenger_version"] = str(client.get_model_version_by_alias(MODEL_NAME, "challenger").version)
+        except Exception:  # noqa: BLE001
+            pass
         exp = client.get_experiment_by_name(DRIFT_EXPERIMENT)
         if exp is not None:
             runs = client.search_runs([exp.experiment_id],

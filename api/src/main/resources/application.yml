@@ -37,11 +37,22 @@ ml:
   server:
     url: http://localhost:${FASTAPI_PORT:8495}
     timeout-ms: 5000
+  challenger:
+    url: http://localhost:${FASTAPI_CHALLENGER_PORT:8496}
+
+# Shadow Deployment (챌린저 병행 추론). 기본 비활성 — 실행 시 --shadow.enabled=true
+shadow:
+  enabled: false
 
 resilience4j:
   circuitbreaker:
     instances:
       mlScoreClient:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+      challengerScoreClient:
         sliding-window-size: 10
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s

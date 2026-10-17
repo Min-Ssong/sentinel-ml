@@ -40,7 +40,7 @@ results = calculate_psi_batch(baselines, holdout, FEATURES)
 
 push_psi_metrics(
     results,
-    gateway_url=os.getenv("PUSHGATEWAY_URL", "localhost:9091"),
+    gateway_url=os.getenv("PUSHGATEWAY_URL", "localhost:9291"),
     model_version="v12",
 )
 print("\nPushgateway 전송 완료")

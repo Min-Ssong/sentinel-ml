@@ -13,7 +13,8 @@ sentinel_retrain_drift — 드리프트 대응 재학습 DAG (1단계)
     (기존 DAG처럼 champion run 의 기록값과 비교하면 서로 다른 평가셋 점수를 비교하게 됨)
   - champion 전처리는 champion run 의 scaler/scaler.json 사용. 없으면 실패 처리
 등록
-  - 통과 시 sentinel-fraud-dag 에 등록하고 @champion 승격, scaler 는 학습 run 에 함께 저장
+  - 통과 시 sentinel-fraud-dag 에 등록하고 @challenger 부여 (2026-10-09 변경, SD7). scaler 는 학습 run 에 함께 저장
+  - 승격은 자동으로 하지 않는다: Shadow 로 실제 트래픽 비교 후 ml/promote_challenger.py 로 수동 승격
   - 서빙(FastAPI)은 기동 시 1회 로드하므로 재기동해야 반영된다
 """
 import os
@@ -172,9 +173,14 @@ def sentinel_retrain_drift():
         mlflow.set_tracking_uri(MLFLOW_URI)
         client = MlflowClient()
         mv = mlflow.register_model(f"runs:/{gate_result['run_id']}/model", MODEL_NAME)
-        client.set_registered_model_alias(MODEL_NAME, "champion", mv.version)
-        print(f"[register_drift] {MODEL_NAME} v{mv.version} 등록 → @champion 승격 "
-              f"(roc_auc={gate_result['roc_auc']:.4f}). 서빙 반영은 FastAPI 재기동 필요")
+        try:  # 기존 챌린저가 있으면 교체 사실을 남긴다
+            prev = client.get_model_version_by_alias(MODEL_NAME, "challenger").version
+        except Exception:  # noqa: BLE001
+            prev = None
+        client.set_registered_model_alias(MODEL_NAME, "challenger", mv.version)
+        print(f"[register_drift] {MODEL_NAME} v{mv.version} 등록 → @challenger (이전 challenger={prev}, "
+              f"roc_auc={gate_result['roc_auc']:.4f}). 승격은 Shadow 비교 후 수동 "
+              f"(ml/promote_challenger.py). 챌린저 서빙(8496) 재기동 필요")
         return f"v{mv.version}"
 
     register_drift(gate_drift(train_drift()))
