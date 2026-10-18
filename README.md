@@ -30,7 +30,7 @@
 | Streaming | Apache Kafka, Spring Kafka |
 | Cache | Redis (Sorted Set, Sliding Window) |
 | ML | Python 3.11, FastAPI, XGBoost / LightGBM |
-| MLOps | MLflow 3.15.1, Apache Airflow 3.x |
+| MLOps | MLflow 3.15.1 (서버·Airflow) / 2.9.2 (호스트 venv 클라이언트), Apache Airflow 3.x |
 | 장애 내성 | Resilience4j (Circuit Breaker, Retry) |
 | 모니터링 | Prometheus, Grafana |
 | Infra | Docker Compose |
@@ -113,6 +113,7 @@ sentinel-ml/
 │   ├── make_drift_files.py         # 드리프트 시나리오 csv 생성 + 자체 검증
 │   ├── backfill_champion_scaler.py # scaler 를 저장하지 않던 시기의 champion run 에 scaler.json 보충 (1회성)
 │   ├── promote_challenger.py       # 챌린저 승격·폐기·롤백 (status / promote / reject / rollback, 기본 dry-run)
+│   ├── report_shadow.py            # Champion/Challenger 비교 리포트 (정답 라벨 기준 같은 거래 비교, 읽기 전용)
 │   ├── scaler.pkl        # train.py 산출물. 현재 서빙은 사용하지 않음
 │   ├── requirements.txt
 │   ├── serving/
@@ -137,6 +138,8 @@ sentinel-ml/
 ├── docs/
 │   ├── erd.md                         # PostgreSQL ERD 설계 문서
 │   ├── kafka-topic-design.md          # Kafka 토픽 설계 문서
+│   ├── reports/
+│   │   └── shadow_2026-10-18.md       # 비교 리포트 결과 + 해석 (원본·S2)
 │   └── sql/
 │       ├── schema.sql                 # PostgreSQL DDL
 │       ├── migration_2026-10-09_shadow_results.sql   # 기존 DB용: FRAUD_RESULTS.ROLE, 유일 제약, 인덱스
@@ -395,6 +398,18 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+> **MLflow 버전이 환경마다 다릅니다.** 호스트 venv(서빙, `promote_challenger.py`, `report_shadow.py`)는 `requirements.txt` 의 2.9.2, Airflow 컨테이너(학습·등록)와 MLflow 서버는 3.15.1 입니다. 2.9.2 클라이언트로 3.15.1 서버의 모델 로드·alias 변경·태그 조회가 동작하는 것을 실사용으로 확인했으나, 공식 호환 보장은 확인하지 않았습니다.
+>
+> | 패키지 | 호스트 venv | Airflow 컨테이너 |
+> |---|---|---|
+> | mlflow | 2.9.2 | 3.15.1 |
+> | xgboost | 3.2.0 | 3.2.0 |
+> | scikit-learn | 1.9.0 | 1.9.0 |
+> | pandas | 2.3.3 | 2.3.3 |
+> | numpy | 1.26.4 | 2.5.1 |
+>
+> (2026-10-18 확인)
+
 | 스크립트 | 역할 |
 |---|---|
 | `explore.py` | 데이터 탐색(EDA) |
@@ -406,6 +421,7 @@ pip install -r requirements.txt
 | `drift_experiment.py` | 드리프트 시나리오(S1·S2) 오프라인 실험 |
 | `make_drift_files.py` | 드리프트 시나리오 csv 생성 + 자체 검증 (MLflow 필요) |
 | `backfill_champion_scaler.py` | champion run 에 scaler.json 보충 (기본 dry-run, `--apply` 시 업로드) |
+| `report_shadow.py` | Champion/Challenger 비교 리포트. `TRANSACTION_LABELS` 기준으로 같은 거래의 혼동행렬·Recall(Wilson 95%)·Precision·F1, 판단 불일치, 룰 차단 거래의 챌린저 성능을 구간별로 Markdown 출력. `--phase "이름=시작/끝"`(KST, `fromisoformat` 형식, 여러 번 지정 가능)과 `--out` 필수. 예: `python report_shadow.py --phase "원본=2026-10-18 11:45:19/2026-10-18 11:54:18" --phase "S2=2026-10-18 11:54:41/2026-10-18 12:03:59" --out ..\docs\reports\shadow_2026-10-18.md` |
 | `promote_challenger.py` | 챌린저 승격·폐기·롤백. `status` 로 alias 와 두 모델 지표 비교, `promote`/`reject`/`rollback` 은 기본 dry-run, `--apply` 시 실행 (`--window 5m` 등) |
 | `serving/app.py` | FastAPI 추론 서버 |
 
@@ -499,10 +515,11 @@ pip install -r requirements.txt
 - 표본이 부족하면 실패가 아니라 "판정 보류"로 처리한다.
 - **보류 조건**: 트리거 조건을 충족해도 아래 중 하나라도 해당하면 트리거하지 않는다.
   - 고정 보류 (`force_trigger` 로도 풀 수 없음): ① 서빙 버전(`/model-info`)이 `@champion` 과 다르면 "서빙 반영 대기" ② 서빙·MLflow 조회 실패 ③ `@challenger` 가 있으면 "챌린저 검증 중" (검증 중에 재학습이 또 돌면 비교 대상이 바뀜)
-  - 시간 보류 (`force_trigger` 로 우회 가능): ④ 마지막 드리프트 재학습 후 2시간(`cooldown_hours`) 미만. 서빙이 기동 시 1회만 로드하기 때문에, 재기동 전까지 옛 모델의 낮은 Recall 로 재학습이 반복되는 것을 막는다.
+  - 시간 보류 (`force_trigger` 로 우회 가능): ④ 마지막 드리프트 재학습 후 2시간(`cooldown_hours`) 미만. 서빙이 기동 시 1회만 로드하기 때문에, 재기동 전까지 옛 모델의 낮은 Recall 로 재학습이 반복되는 것을 막는다. ⑤ 마지막 alias 변경(모델 버전 태그 `promoted_at`·`rejected_at`·`rolled_back_at` 중 최신) 후 판정 창(`window`, 기본 1h) 미만 (2026-10-18 추가). 판정 창 안에 변경 전 트래픽이 남아 있는 동안은 그 Recall 로 판정하지 않는다.
 - `force_trigger` 는 트리거 경로 검증용으로 Recall 조건과 시간 보류만 우회한다. 수동 실행 폼에 시험용 값(`cooldown_hours=0`, `force_trigger=True`)이 남은 채 실행된 사고가 두 번 있어(10/5 의도치 않은 승격, 10/14 검증 중 챌린저 교체) 10/17 에 고정 보류는 우회할 수 없게 바꿨다. 실행 파라미터가 기본값과 다르면 `[warn]` 로그를 남긴다.
 - 트리거 대상은 드리프트 재학습 DAG(`sentinel_retrain_drift`).
-- 운영 주의: 드리프트 트래픽(S2)을 흘린 뒤 판정 DAG 를 일시정지했다가 재개하면, 밀려 있던 스케줄 실행이 1시간 창 안의 드리프트 구간을 보고 재학습할 수 있다. 시험 후에는 판정 창(1h)이 지난 뒤 재개한다.
+- 운영 주의: 드리프트 트래픽(S2)을 흘린 뒤 판정 DAG 를 일시정지했다가 재개하면, 밀려 있던 스케줄 실행이 1시간 창 안의 드리프트 구간을 보고 재학습할 수 있다. 같은 사고가 두 번 있었다 (10/17 롤백 직후 v17, 10/18 폐기 직후 v18 — 둘 다 `@challenger` 등록에 그쳐 champion 은 영향 없음). 절차 안내만으로 재발을 막지 못해 ⑤를 추가했다.
+  - ⑤가 막지 못하는 경우: alias 변경 없이 드리프트 트래픽 직후 재개하는 경우, 태그가 없는 10/17 이전 롤백. 시험 후에는 여전히 판정 창(1h)이 지난 뒤 재개한다.
 
 **드리프트 재학습 DAG (`sentinel_retrain_drift`)**
 - 기존 `sentinel_retrain`(3단계 누적 재연)은 그대로 두고, 목적이 다른 재학습을 별도 DAG로 분리했다.
@@ -567,12 +584,14 @@ transactions ─┬─ sentinel-group        → TransactionConsumer → Rule �
 | 원본 데이터, DB 저장 (10/9) | CHAMPION 4,241행 / CHALLENGER 5,054행, 짝지어진 거래 4,241건 중 판단 일치 99.06% (불일치 40건은 모두 챌린저만 사기로 판단). 외래키 대기 평균 57.7ms·최대 82.3ms, 저장 생략·오류 0, LAG 0 |
 | 루프 검증 2: S2 + 수동 승격 (10/17, 5분 창) | Shadow 비교: 챔피언 v12 0.3533 vs 챌린저 v16 0.9592 → `promote --apply` → 서빙 재기동 6분 후 0.9566 → `rollback --apply` 로 v12 복귀 |
 | 역할 기록 (10/17) | 같은 v16 이 CHALLENGER(11,253행)로 기록되다가 승격 후 CHAMPION(3,522행)으로 기록됨 |
+| 같은 거래·정답 라벨 비교 (10/18, `report_shadow.py`) | 원본: 챔피언 v12 0.8137 vs 챌린저 v16 0.8248 (1,621건, 구간 겹침 → 동등). S2: 0.3635 vs 0.9547 (1,634건). v16 은 S2 사기 행을 학습한 시연용이라 S2 우세는 예상된 결과 → [리포트](docs/reports/shadow_2026-10-18.md) |
 
 **승격 절차**
 
 ```powershell
 cd ml
-python promote_challenger.py status --window 5m     # alias 와 두 모델 Recall·Precision
+python promote_challenger.py status --window 5m     # alias 와 두 모델 Recall·Precision (모집단이 달라 참고용)
+# 승격 판단 근거는 같은 거래 기준 비교 리포트 (report_shadow.py)
 python promote_challenger.py promote                # 계획만 출력 (dry-run)
 python promote_challenger.py promote --apply        # @champion ← 챌린저, @previous_champion ← 이전 챔피언, @challenger 제거
 # 이후 [다음] 안내대로: 챔피언 서빙 재기동, 챌린저 서빙 종료, API --shadow.enabled=false 로 재기동
@@ -581,7 +600,8 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 ```
 
 **한계**
-- 10/17 이전 거래에는 정답 라벨이 없어, 위 검증 결과(10/7~10/17)의 Recall 은 Prometheus 지표 기준입니다. 이후 거래는 `TRANSACTION_LABELS` 로 DB 에서 같은 거래끼리 비교할 수 있습니다 (첫 확인: 챔피언 v12 Recall 291/358 = 0.8128, 원본 데이터).
+- 10/17 이전 거래에는 정답 라벨이 없어, 위 검증 결과(10/7~10/17)의 Recall 은 Prometheus 지표 기준입니다. 이후 거래는 `TRANSACTION_LABELS` 로 DB 에서 같은 거래끼리 비교합니다 (10/18 리포트).
+- 사기 거래는 holdout 사기 75행의 반복 추출이라 서로 독립이 아닙니다. 리포트의 Wilson 구간과 검정값은 낙관적이며, 원본 구간의 차이는 사기 원본 행 1개 수준으로 봅니다.
 - 서빙이 alias 를 기동 시 1회만 읽어 승격·폐기 후 재기동이 필요합니다.
 - `FRAUD_RESULTS.CREATED_AT` 은 Spring Auditing 이 KST `LocalDateTime` 으로 채우고 DB 세션은 UTC 라, `now()` 기준 시간 조건 쿼리가 9시간 어긋납니다 (`TIMESTAMPTZ` 전환 예정).
 
@@ -636,9 +656,10 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 - Shadow 비교 → 수동 승격 → 회복 → 롤백 검증 (0.35 vs 0.96 → 승격 후 0.96 → v12 복귀)
 - 운영 안전장치: 판정 DAG `force_trigger` 가 고정 보류를 우회하지 못하게, 기본값과 다른 파라미터 경고, `transactions` 3파티션 재생성과 자동 생성 기본 파티션 3
 - 비교 리포트 준비: 거래 정답 라벨 저장 (`TRANSACTION_LABELS`, `TIMESTAMPTZ`)
+- Champion/Challenger 비교 리포트 (`ml/report_shadow.py`, 같은 거래 기준) — 원본 동등, S2 챌린저 우세 (`docs/reports/`)
+- 판정 DAG 보류 조건 ⑤: alias 변경 직후(판정 창 미만) 재학습 보류 — 재개 직후 재학습 사고 2회 재발 방지
 
 ### 🔜 예정
-- Champion/Challenger 비교 리포트 (`ml/report_shadow.py`, 같은 거래 기준 Recall/Precision·불일치 분석)
 - 시각 컬럼 `TIMESTAMPTZ` + `Instant` 전환
 - 서빙 자동 재로드 (현재 alias 변경 시 재기동)
 - PSI baseline 을 champion 학습 데이터와 연동

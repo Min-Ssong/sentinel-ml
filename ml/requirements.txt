@@ -5,6 +5,7 @@ scikit-learn
 xgboost
 lightgbm
 imbalanced-learn
+# host venv only. Airflow container and MLflow server use 3.15.1 (2.9.2 client verified for model load, alias, tags; official compatibility not verified)
 mlflow==2.9.2
 matplotlib
 seaborn
