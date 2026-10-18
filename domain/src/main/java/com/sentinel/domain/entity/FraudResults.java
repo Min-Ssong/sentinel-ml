@@ -7,7 +7,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 /**
  * 모델 판단 결과. 거래 1건에 CHAMPION 1행 + (Shadow 활성 시) CHALLENGER 1행 (N:1).
@@ -45,8 +45,8 @@ public class FraudResults {
     private ModelRole role;
 
     @CreatedDate
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    @Column(name = "created_at", nullable = false, updatable = false, columnDefinition = "timestamptz")
+    private Instant createdAt;
 
     protected FraudResults() {
     }

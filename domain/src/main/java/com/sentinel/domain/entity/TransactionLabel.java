@@ -12,8 +12,8 @@ import java.time.Instant;
  *   지금은 시뮬레이터가 메시지에 정답을 실어 보내 즉시 저장하지만(LABEL_SOURCE = SIMULATOR),
  *   테이블 구조는 지연 도착을 표현할 수 있게 둔다. 운영 거래 테이블에 시뮬레이션 전용 값을 섞지 않는다.
  * - 룰 차단·Fallback 거래도 저장한다 (모델 판단 여부와 무관한 거래 단위 정답).
- * - LABELED_AT 은 TIMESTAMPTZ + Instant (2026-10-17). 다른 테이블의 시각 컬럼(TIMESTAMP + LocalDateTime, KST)도
- *   같은 방식으로 옮길 예정 (R2).
+ * - LABELED_AT 은 TIMESTAMPTZ + Instant (2026-10-17). 다른 테이블의 시각 컬럼도 2026-10-18 R2 에서
+ *   같은 방식(TIMESTAMPTZ + Instant)으로 옮김.
  */
 @Entity
 @Table(name = "transaction_labels")

@@ -5,7 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Entity
 @Table(name = "model_metadata")
@@ -31,6 +31,6 @@ public class ModelMetadata {
     private boolean active;
 
     @CreatedDate
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    @Column(name = "created_at", nullable = false, updatable = false, columnDefinition = "timestamptz")
+    private Instant createdAt;
 }

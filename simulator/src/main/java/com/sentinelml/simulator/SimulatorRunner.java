@@ -8,7 +8,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
@@ -64,7 +64,7 @@ public class SimulatorRunner implements CommandLineRunner {
                 "device-" + random.nextInt(10),
                 "192.168.1." + random.nextInt(255),
                 "KR",
-                LocalDateTime.now(),
+                Instant.now(),
                 false,
                 featureLoader.randomNormal()    // Class=0 행
         );
@@ -88,7 +88,7 @@ public class SimulatorRunner implements CommandLineRunner {
                 "device-" + random.nextInt(3),
                 "192.168.1." + random.nextInt(255),
                 "KR",
-                LocalDateTime.now(),
+                Instant.now(),
                 true,
                 featureLoader.randomFraud()     // Class=1 행
         );
@@ -103,7 +103,7 @@ public class SimulatorRunner implements CommandLineRunner {
                 "device-" + random.nextInt(10),
                 "192.168.1." + random.nextInt(255),
                 "KR",
-                LocalDateTime.now(),
+                Instant.now(),
                 true,
                 featureLoader.randomFraud()
         );
@@ -119,7 +119,7 @@ public class SimulatorRunner implements CommandLineRunner {
                 "device-" + random.nextInt(10),
                 "192.168." + random.nextInt(255) + "." + random.nextInt(255),
                 foreignCountries.get(random.nextInt(foreignCountries.size())),
-                LocalDateTime.now(),
+                Instant.now(),
                 true,
                 featureLoader.randomFraud()
         );

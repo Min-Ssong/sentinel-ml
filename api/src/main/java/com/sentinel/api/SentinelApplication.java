@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 
 @SpringBootApplication(scanBasePackages = "com.sentinel")
-@EnableJpaAuditing
+@EnableJpaAuditing(dateTimeProviderRef = "auditingDateTimeProvider")
 @EntityScan(basePackages = "com.sentinel.domain.entity")
 public class SentinelApplication {
     public static void main(String[] args) {

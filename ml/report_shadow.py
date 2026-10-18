@@ -11,8 +11,8 @@ Prometheus 지표(집계값)와 달리 "같은 거래끼리" 비교하므로 모
       --out ../docs/reports/shadow_2026-10-18.md
 
   - 구간 시각은 KST(+09:00)로 해석한다 (시간대를 붙여 쓰면 그대로 사용)
-  - 구간 선택 기준은 TRANSACTION_LABELS.LABELED_AT (TIMESTAMPTZ). 다른 테이블의 CREATED_AT 은
-    시간대 없는 KST 값이라 쓰지 않는다 (R2 전환 전)
+  - 구간 선택 기준은 TRANSACTION_LABELS.LABELED_AT (TIMESTAMPTZ). 2026-10-18 R2 로 다른 테이블의
+    CREATED_AT 도 TIMESTAMPTZ 가 되었지만, 리포트는 "라벨이 도착한 거래" 기준이라 LABELED_AT 을 유지한다
 
 판정 기준
   - 예측 사기 = ML_SCORE >= 0.5 (ScoreDecision.outcome 과 같은 기준). ML_SCORE 는 소수 4자리 반올림 저장
