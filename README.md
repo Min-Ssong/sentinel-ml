@@ -14,9 +14,11 @@
 
 카드 도용, 비정상 고액 결제, 물리적으로 불가능한 위치 이동 등 이상 거래 패턴을 실시간으로 탐지하는 시스템입니다. Rule Engine 1차 필터 → ML 모델 추론 → 결과 저장의 파이프라인으로 동작합니다.
 
+> 문제 해결 사례 4개(두 consumer group 의 외래키 경쟁, 반복된 운영 사고 차단, 실시간 지표의 데이터 누수, 시각 컬럼 시간대 전환)는 **[핵심 구현 포인트](docs/portfolio.md)** 에 정리했습니다.
+
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
-- Circuit Breaker + DLQ + Fallback — ML 서버 장애 시에도 거래 처리 중단 없음 (P95 100ms SLA는 k6 검증 예정)
+- Circuit Breaker + DLQ + Fallback — ML 서버 장애 시 룰 결과로 처리하도록 설계·구현 (장애 주입 시험과 P95 100ms SLA 는 k6 와 함께 검증 예정)
 - MLOps 자동화 — 성능 게이트, Drift 모니터링(PSI, Precision/Recall), 판정 DAG → 드리프트 재학습 DAG → `@challenger` 등록 → Shadow Deployment(실트래픽 병행 추론 비교) → 수동 승격·롤백 루프 (합성 드리프트 시나리오로 검증)
 - Shadow Deployment — 같은 거래를 Champion/Challenger 두 모델이 별도 consumer group 으로 판단, 거래별 결과를 모델 버전·역할(`ROLE`)과 함께 저장. 챌린저 장애는 별도 Circuit Breaker 로 격리
 
@@ -136,6 +138,7 @@ sentinel-ml/
 │       └── resources/
 │           └── application.yml
 ├── docs/
+│   ├── portfolio.md                   # 핵심 구현 포인트 (문제 해결 사례 4개)
 │   ├── erd.md                         # PostgreSQL ERD 설계 문서
 │   ├── kafka-topic-design.md          # Kafka 토픽 설계 문서
 │   ├── reports/
@@ -614,6 +617,7 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 
 ## 설계 문서
 
+- [핵심 구현 포인트](docs/portfolio.md)
 - [ERD 설계](docs/erd.md)
 - [Kafka 토픽 설계](docs/kafka-topic-design.md)
 - [PostgreSQL DDL](docs/sql/schema.sql)
