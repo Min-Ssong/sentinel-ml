@@ -46,7 +46,7 @@ sentinel-ml/
 ├── common/               # 공통 DTO, 유틸
 │   └── src/main/java/com/sentinel/common/
 │       ├── dto/
-│       │   └── TransactionMessage.java       # Kafka 메시지 계약. features(ML 입력 30개), isFraud(정답)
+│       │   └── TransactionMessage.java       # Kafka 메시지 계약. features(ML 입력 30개), isFraud(정답), timestamp(Instant)
 │       └── util/
 │           └── TransactionIdGenerator.java   # UUID 기반 Transaction ID 생성
 ├── domain/               # JPA Entity, Repository, 도메인 인터페이스
@@ -143,7 +143,8 @@ sentinel-ml/
 │   └── sql/
 │       ├── schema.sql                 # PostgreSQL DDL
 │       ├── migration_2026-10-09_shadow_results.sql   # 기존 DB용: FRAUD_RESULTS.ROLE, 유일 제약, 인덱스
-│       └── migration_2026-10-17_transaction_labels.sql # 기존 DB용: TRANSACTION_LABELS
+│       ├── migration_2026-10-17_transaction_labels.sql # 기존 DB용: TRANSACTION_LABELS
+│       └── migration_2026-10-18_timestamptz.sql        # 기존 DB용: 시각 컬럼 TIMESTAMP(KST) → TIMESTAMPTZ
 ├── infra/
 │   └── docker/
 │       ├── docker-compose.yml         # 기반 5개 + 모니터링 3개 (prometheus, pushgateway, grafana)
@@ -253,11 +254,13 @@ Get-Content ..\..\docs\sql\schema.sql | docker exec -i sentinel-postgres psql -U
 > `postgres_data` 볼륨은 PC 간 공유되지 않으므로 새 환경에서는 반드시 실행해야 합니다.
 > 누락 시 `Schema-validation: missing table [fraud_results]` 로 API 기동이 실패합니다.
 >
-> 이전에 만든 DB는 아래 변경을 날짜 순서대로 따로 적용해야 합니다 (`ROLE` 컬럼이나 `TRANSACTION_LABELS` 가 없으면 API 기동 실패).
+> 이전에 만든 DB는 아래 변경을 날짜 순서대로 따로 적용해야 합니다 (`ROLE` 컬럼·`TRANSACTION_LABELS`·`TIMESTAMPTZ` 컬럼이 없으면 스키마 검증으로 API 기동 실패).
+> 10/18 변경은 API·시뮬레이터를 끄고, 토픽에 옛 형식 메시지가 남지 않은 상태(consumer lag 0)에서 적용합니다 (메시지의 `timestamp` 타입이 바뀜).
 >
 > ```powershell
 > Get-Content ..\..\docs\sql\migration_2026-10-09_shadow_results.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
 > Get-Content ..\..\docs\sql\migration_2026-10-17_transaction_labels.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb
+> Get-Content ..\..\docs\sql\migration_2026-10-18_timestamptz.sql | docker exec -i sentinel-postgres psql -U sentinel -d sentineldb -v ON_ERROR_STOP=1
 > ```
 
 ### 5) Kafka 토픽 생성
@@ -450,7 +453,10 @@ pip install -r requirements.txt
 - `FRAUD_RESULTS.ROLE` (`CHAMPION`/`CHALLENGER`): 같은 모델 버전이 챌린저였다가 승격 후 챔피언이 되므로 `MODEL_ID` 만으로는 역할을 구분할 수 없음 (2026-10-09 추가)
 - `MODEL_METADATA (MODEL_NAME, VERSION)` 유일: 서빙 응답의 모델명·버전으로 행을 찾거나 만들기 때문
 - `TRANSACTION_LABELS` 분리 (2026-10-17): 정답 라벨(사기 여부)은 실제로는 차지백·고객 신고 등으로 거래보다 늦게 도착하므로 거래 테이블에 넣지 않고 별도 테이블로 둔다. 지금은 시뮬레이터 정답을 즉시 저장(`LABEL_SOURCE = SIMULATOR`)하지만 구조는 지연 도착을 표현할 수 있다. 룰 차단 거래도 저장한다
-- 시각 컬럼: `TRANSACTION_LABELS.LABELED_AT` 은 `TIMESTAMPTZ`. 나머지 테이블의 `TIMESTAMP` 컬럼은 애플리케이션이 KST `LocalDateTime` 으로 채우고 DB 세션은 UTC 라 `now()` 기준 쿼리가 어긋난다 → `TIMESTAMPTZ` 로 전환 예정
+- 시각 컬럼은 모두 `TIMESTAMPTZ` + Java `Instant` (2026-10-18 전환). 이전에는 `TIMESTAMP` + KST `LocalDateTime` 이라 시간대 정보 없이 저장되고 DB 세션(UTC)의 `now()` 기준 쿼리가 9시간 어긋났다 (전환 직전 실측: `created_at > now()` 인 "미래" 거래 9,689건 → 전환 후 0건).
+  - 기존 행 변환 규칙(`AT TIME ZONE 'Asia/Seoul'`)은 이미 `TIMESTAMPTZ` 였던 `LABELED_AT` 과 같은 거래의 `CREATED_AT` 이 KST 로 읽었을 때 0~0.2초 차이(10,780건)인 것으로 검증한 뒤 적용했다. 되돌리기는 역변환 SQL 로 한다 (MLflow 저장소가 같은 DB 를 쓰므로 전체 백업 복원은 MLflow 변경까지 되돌림).
+  - `@CreatedDate` 값은 `DateTimeProvider` 로 `Instant.now()` 를 직접 공급 (기본 공급자의 `LocalDateTime` → JVM 시간대 변환 경로 제거).
+  - Kafka 메시지 `timestamp` 는 `Instant` 로 바뀌어 epoch 초(소수 나노초) 숫자로 직렬화된다 (예: `1792312980.231707500`). 생산자·소비자를 함께 배포해야 하는 계약 변경이다.
 - `AMOUNT`: DECIMAL(15,2) — Double 부동소수점 오차 방지, 금융 정밀도 필수
 - `IP_ADDRESS`: VARCHAR(45) — IPv4-mapped IPv6 최대 길이(45자) 수용
 
@@ -603,7 +609,6 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 - 10/17 이전 거래에는 정답 라벨이 없어, 위 검증 결과(10/7~10/17)의 Recall 은 Prometheus 지표 기준입니다. 이후 거래는 `TRANSACTION_LABELS` 로 DB 에서 같은 거래끼리 비교합니다 (10/18 리포트).
 - 사기 거래는 holdout 사기 75행의 반복 추출이라 서로 독립이 아닙니다. 리포트의 Wilson 구간과 검정값은 낙관적이며, 원본 구간의 차이는 사기 원본 행 1개 수준으로 봅니다.
 - 서빙이 alias 를 기동 시 1회만 읽어 승격·폐기 후 재기동이 필요합니다.
-- `FRAUD_RESULTS.CREATED_AT` 은 Spring Auditing 이 KST `LocalDateTime` 으로 채우고 DB 세션은 UTC 라, `now()` 기준 시간 조건 쿼리가 9시간 어긋납니다 (`TIMESTAMPTZ` 전환 예정).
 
 ---
 
@@ -658,9 +663,9 @@ python promote_challenger.py reject --apply         # 폐기 (@challenger 제거
 - 비교 리포트 준비: 거래 정답 라벨 저장 (`TRANSACTION_LABELS`, `TIMESTAMPTZ`)
 - Champion/Challenger 비교 리포트 (`ml/report_shadow.py`, 같은 거래 기준) — 원본 동등, S2 챌린저 우세 (`docs/reports/`)
 - 판정 DAG 보류 조건 ⑤: alias 변경 직후(판정 창 미만) 재학습 보류 — 재개 직후 재학습 사고 2회 재발 방지
+- 시각 컬럼 `TIMESTAMPTZ` + `Instant` 전환 — 기존 157,472건 변환, `now()` 기준 쿼리 9시간 어긋남 해소
 
 ### 🔜 예정
-- 시각 컬럼 `TIMESTAMPTZ` + `Instant` 전환
 - 서빙 자동 재로드 (현재 alias 변경 시 재기동)
 - PSI baseline 을 champion 학습 데이터와 연동
 - k6 부하 테스트 — P95 < 100ms 검증 (ML 호출 타임아웃 설정 5000ms → SLA 기준 재검토 포함)
