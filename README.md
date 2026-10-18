@@ -375,7 +375,7 @@ Invoke-RestMethod http://localhost:8496/model-info   # alias=challenger, 버전 
 | Kafka | 9192 | `KAFKA_PORT` |
 | Zookeeper | 4500 | `ZOOKEEPER_PORT` |
 | PostgreSQL | 5800 | `POSTGRES_PORT` |
-| Redis | 6379 | `REDIS_PORT` |
+| Redis | 7379 | `REDIS_PORT` |
 | Prometheus | 9290 | `PROMETHEUS_PORT` |
 | Pushgateway | 9291 | `PUSHGATEWAY_PORT` |
 | Grafana | 3900 | `GRAFANA_PORT` |

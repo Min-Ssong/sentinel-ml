@@ -14,6 +14,10 @@
     show-sql: true
   application:
     name: sentinel-ml-api
+  data:
+    redis:
+      host: localhost
+      port: ${REDIS_PORT:7379}
   profiles:
     active: local
   kafka:
