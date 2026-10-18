@@ -117,6 +117,8 @@ def main():
     else:
         client.set_registered_model_alias(MODEL_NAME, "previous_champion", champ)
         client.set_registered_model_alias(MODEL_NAME, "champion", prev)
+        # 판정 DAG 보류 조건 5(alias 변경 직후)가 읽는 시각 (promoted_at / rejected_at 와 같은 형식)
+        client.set_model_version_tag(MODEL_NAME, prev, "rolled_back_at", now)
 
     print("\n[적용 후]")
     status(client, args.window)

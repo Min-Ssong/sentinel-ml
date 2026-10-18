@@ -20,6 +20,11 @@ sentinel_drift_monitor — Drift 판정 DAG
          검증 중에 재학습이 또 돌면 비교 대상 챌린저가 바뀌어 Shadow 비교가 무의미해짐
     [시간 보류] force_trigger 로 우회 가능
       3) 마지막 드리프트 재학습 run 시작 후 cooldown_hours(기본 2) 미만
+      5) 마지막 alias 변경(승격·폐기·롤백) 후 판정 창(window) 미만 (2026-10-18)
+         판정 창 안에 변경 전 상태의 트래픽이 남아 있어 Recall 판정을 믿을 수 없고,
+         폐기 직후 재학습은 방금 폐기한 것과 같은 데이터로 같은 모델을 다시 만든다
+         (10/17 롤백 직후 v17, 10/18 폐기 직후 v18 이 이렇게 등록됨).
+         변경 시각은 버전 태그 promoted_at / rejected_at / rolled_back_at (promote_challenger.py)
          재기동 직후 판정 창(1h)에 이전 트래픽이 섞여 재트리거되는 것을 방지 (창의 2배로 잡은 설계 선택)
   - force_trigger=True 는 트리거 경로 검증용 스위치. Recall 조건과 시간 보류만 우회한다.
     2026-10-17 변경 전에는 모든 보류를 무시했고, 수동 실행 폼에 남은 값으로 두 번 사고가 남
@@ -40,7 +45,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import dag, task
@@ -103,7 +108,34 @@ def _prom_scalar(promql):
     return float(result[0]["value"][1])
 
 
-def _hold_reasons(cd, cooldown_hours):
+def _window_hours(window):
+    """'1h' / '30m' / '45s' / '1d' → 시간(float). fetch_recall 과 같은 형식."""
+    m = re.fullmatch(r"(\d+)([smhd])", str(window))
+    if not m:
+        raise ValueError(f"window 형식 오류: {window!r}")
+    return int(m.group(1)) * {"s": 1 / 3600, "m": 1 / 60, "h": 1, "d": 24}[m.group(2)]
+
+
+ALIAS_CHANGE_TAGS = ("promoted_at", "rejected_at", "rolled_back_at")  # promote_challenger.py 가 남기는 태그
+
+
+def _last_alias_change(client):
+    """모든 버전의 alias 변경 태그 중 가장 최근 것 → (시각, '태그@v버전'). 없으면 (None, None)."""
+    latest, what = None, None
+    for mv in client.search_model_versions(f"name='{MODEL_NAME}'"):
+        for tag in ALIAS_CHANGE_TAGS:
+            raw = (mv.tags or {}).get(tag)
+            if not raw:
+                continue
+            at = datetime.fromisoformat(raw)
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=timezone.utc)
+            if latest is None or at > latest:
+                latest, what = at, f"{tag}@v{mv.version}"
+    return latest, what
+
+
+def _hold_reasons(cd, cooldown_hours, window_hours=None):
     """check_cooldown 결과로 보류 사유를 (고정 보류, 시간 보류) 두 목록으로 나눠 반환한다.
 
     고정 보류: 모델 상태가 판정에 맞지 않음 → force_trigger 로도 풀지 않는다.
@@ -123,6 +155,10 @@ def _hold_reasons(cd, cooldown_hours):
     age = cd["last_drift_age_h"]
     if age is not None and age < cooldown_hours:
         soft.append(f"쿨다운: 직전 드리프트 재학습 {age}h 전 < {cooldown_hours}h")
+    alias_age = cd.get("last_alias_change_age_h")
+    if window_hours is not None and alias_age is not None and alias_age < window_hours:
+        soft.append(f"alias 변경 직후: {cd.get('last_alias_change')} {alias_age}h 전 < 판정 창 {round(window_hours, 3)}h "
+                    f"(창 안에 변경 전 트래픽)")
     return hard, soft
 
 
@@ -201,7 +237,8 @@ def check_cooldown():
     import time
 
     out = {"serving_version": None, "champion_version": None, "challenger_version": None,
-           "last_drift_age_h": None, "errors": []}
+           "last_drift_age_h": None, "last_alias_change": None, "last_alias_change_age_h": None,
+           "errors": []}
 
     try:
         with urllib.request.urlopen(f"{SERVING_URL}/model-info", timeout=5) as resp:
@@ -226,6 +263,11 @@ def check_cooldown():
                                       order_by=["attributes.start_time DESC"], max_results=1)
             if runs:
                 out["last_drift_age_h"] = round((time.time() * 1000 - runs[0].info.start_time) / 3.6e6, 2)
+        changed_at, what = _last_alias_change(client)
+        if changed_at is not None:
+            out["last_alias_change"] = what
+            out["last_alias_change_age_h"] = round(
+                (datetime.now(timezone.utc) - changed_at).total_seconds() / 3600, 2)
     except Exception as e:  # noqa: BLE001
         out["errors"].append(f"MLflow 조회 실패: {e}")
 
@@ -257,7 +299,7 @@ def decide(psi, recall, cooldown, **context):
     else:
         print(f"[hold] Recall 판정 보류: 표본 {recall['samples']} < 최소 {min_samples}")
 
-    hard, soft = _hold_reasons(cooldown, float(params["cooldown_hours"]))
+    hard, soft = _hold_reasons(cooldown, float(params["cooldown_hours"]), _window_hours(params["window"]))
     holds = hard + soft
     if reasons and holds:
         print(f"[hold] 트리거 조건 충족했으나 보류: {holds} (조건: {reasons})")
@@ -269,7 +311,7 @@ def decide(psi, recall, cooldown, **context):
         if hard:  # 고정 보류는 강제 실행으로도 풀지 않는다 (2026-10-17)
             print(f"[hold] force_trigger=True 이지만 고정 보류라 트리거하지 않음: {hard}")
         else:
-            reasons.append("force_trigger=True (경로 검증용, Recall 조건·쿨다운만 우회)"
+            reasons.append("force_trigger=True (경로 검증용, Recall 조건·시간 보류만 우회)"
                            + (f", 우회한 보류: {soft}" if soft else ""))
 
     print(f"[decide] trigger={bool(reasons)} reasons={reasons}")
