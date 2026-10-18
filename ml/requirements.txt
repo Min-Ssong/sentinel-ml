@@ -10,4 +10,5 @@ matplotlib
 seaborn
 fastapi
 uvicorn[standard]
-prometheus-clientpsycopg2-binary
+prometheus-client
+psycopg2-binary
