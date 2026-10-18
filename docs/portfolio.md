@@ -55,7 +55,7 @@
 - 10/9 측정 당시의 토픽 파티션 수는 기록하지 않았습니다. 10/17 에 `transactions` 가 1파티션으로 운영되고 있던 것을 발견해 3파티션으로 다시 만들었습니다
 - 초당 10건, 단일 PC 입니다. 부하 시험 전입니다
 
-**증거**: [ShadowConsumer](../api/src/main/java/com/sentinel/api/consumer/ShadowConsumer.java) · [KafkaConfig](../api/src/main/java/com/sentinel/api/config/KafkaConfig.java) · [ChallengerScoreClient](../ml-client/src/main/java/com/sentinel/mlclient/ChallengerScoreClient.java) · 커밋 [`a5b0c1e`](https://github.com/Min-Ssong/sentinel-ml/commit/a5b0c1e) [`5ef5df9`](https://github.com/Min-Ssong/sentinel-ml/commit/5ef5df9)
+**증거**: [ShadowConsumer](../api/src/main/java/com/sentinel/api/consumer/ShadowConsumer.java) · [KafkaConfig](../api/src/main/java/com/sentinel/api/config/KafkaConfig.java) · [ChallengerScoreClient](../ml-client/src/main/java/com/sentinel/mlclient/ChallengerScoreClient.java) · 커밋 [`4571dca`](https://github.com/Min-Ssong/sentinel-ml/commit/4571dca) [`b3e60f7`](https://github.com/Min-Ssong/sentinel-ml/commit/b3e60f7)
 
 ---
 
@@ -85,7 +85,7 @@
 - 근본 원인(판정 창에 과거 트래픽이 섞이는 것)은 그대로입니다
 - 위 재현 확인은 Airflow·MLflow 를 대체한 로컬 단위 확인이고, 아직 저장소에 테스트로 넣지 않았습니다
 
-**증거**: [판정 DAG](../infra/docker/airflow/dags/sentinel_drift_monitor.py) · [promote_challenger.py](../ml/promote_challenger.py) · 커밋 [`a669432`](https://github.com/Min-Ssong/sentinel-ml/commit/a669432) (챌린저 등록·수동 승격) [`170f634`](https://github.com/Min-Ssong/sentinel-ml/commit/170f634) (고정/시간 보류) [`3b289e2`](https://github.com/Min-Ssong/sentinel-ml/commit/3b289e2) (alias 변경 보류)
+**증거**: [판정 DAG](../infra/docker/airflow/dags/sentinel_drift_monitor.py) · [promote_challenger.py](../ml/promote_challenger.py) · 커밋 [`b18321d`](https://github.com/Min-Ssong/sentinel-ml/commit/b18321d) (챌린저 등록·수동 승격) [`541d83f`](https://github.com/Min-Ssong/sentinel-ml/commit/541d83f) (고정/시간 보류) [`9a5d027`](https://github.com/Min-Ssong/sentinel-ml/commit/9a5d027) (alias 변경 보류)
 
 ---
 
@@ -118,7 +118,7 @@
 - 사기 표본이 75건이고 반복 추출이라 구간은 낙관적입니다. 드리프트(S2)는 합성 시나리오입니다
 - "Recall 99%" 는 누수 값이라 어디에도 성과로 쓰지 않습니다
 
-**증거**: [compare_serving_models.py](../ml/compare_serving_models.py) · [serving/app.py](../ml/serving/app.py) · [backfill_champion_scaler.py](../ml/backfill_champion_scaler.py) · 커밋 [`229c2ed`](https://github.com/Min-Ssong/sentinel-ml/commit/229c2ed) (서빙 전환) [`6ed980d`](https://github.com/Min-Ssong/sentinel-ml/commit/6ed980d) (DAG 전처리 저장) [`e357610`](https://github.com/Min-Ssong/sentinel-ml/commit/e357610) (판정 규칙)
+**증거**: [compare_serving_models.py](../ml/compare_serving_models.py) · [serving/app.py](../ml/serving/app.py) · [backfill_champion_scaler.py](../ml/backfill_champion_scaler.py) · 커밋 [`7f609b5`](https://github.com/Min-Ssong/sentinel-ml/commit/7f609b5) (서빙 전환) [`56496f3`](https://github.com/Min-Ssong/sentinel-ml/commit/56496f3) (DAG 전처리 저장) [`f7b41e7`](https://github.com/Min-Ssong/sentinel-ml/commit/f7b41e7) (판정 규칙)
 
 ---
 
@@ -161,7 +161,7 @@
 - 다운타임을 허용한 전환입니다 (`ALTER TYPE` 은 테이블을 다시 쓰고 잠급니다). 무중단 전환(새 컬럼 추가 → 이중 기록 → 백필 → 읽기 전환)은 하지 않았습니다
 - 메시지의 `timestamp` 는 epoch 초 숫자로 직렬화됩니다. Java 소비자끼리는 문제없지만, 다른 언어 소비자가 붙는다면 ISO-8601 문자열이 낫습니다
 
-**증거**: [마이그레이션 SQL](sql/migration_2026-10-18_timestamptz.sql) · [JpaConfig](../api/src/main/java/com/sentinel/api/config/JpaConfig.java) · [Transaction 엔티티](../domain/src/main/java/com/sentinel/domain/entity/Transaction.java) · 커밋 [`a455e30`](https://github.com/Min-Ssong/sentinel-ml/commit/a455e30)
+**증거**: [마이그레이션 SQL](sql/migration_2026-10-18_timestamptz.sql) · [JpaConfig](../api/src/main/java/com/sentinel/api/config/JpaConfig.java) · [Transaction 엔티티](../domain/src/main/java/com/sentinel/domain/entity/Transaction.java) · 커밋 [`49c6b45`](https://github.com/Min-Ssong/sentinel-ml/commit/49c6b45)
 
 ---
 
