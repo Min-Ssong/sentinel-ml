@@ -40,6 +40,7 @@ server:
 ml:
   server:
     url: http://localhost:${FASTAPI_PORT:8495}
+    # 코드 기본값 50 (SLA 기준) 을 덮어씀. 50ms 실행 시 Fallback 비율은 측정 기록 없음 -> k6 측정 후 결정
     timeout-ms: 5000
   challenger:
     url: http://localhost:${FASTAPI_CHALLENGER_PORT:8496}
