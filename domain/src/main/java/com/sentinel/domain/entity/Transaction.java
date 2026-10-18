@@ -39,7 +39,7 @@ public class Transaction {
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
 
-    @Column(name = "country", length = 10)
+    @Column(name = "country", length = 100)
     private String country;
 
     // 거래 발생 시각 (메시지의 timestamp). columnDefinition: ddl-auto=validate 에서 timestamptz 와 비교되게 함

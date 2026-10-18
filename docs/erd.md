@@ -1,6 +1,6 @@
 # Sentinel-ML ERD
 
-> 기준: `docs/sql/schema.sql` 과 `domain` 모듈 엔티티 (2026-10-19 대조). 둘이 다른 곳은 표 아래에 적었다.
+> 기준: `docs/sql/schema.sql` 과 `domain` 모듈 엔티티, 실행 중인 DB(`information_schema`·`pg_indexes`·`pg_constraint`) 대조 (2026-10-19). 다른 곳은 표 아래에 적었다.
 
 ## 테이블 관계
 
@@ -27,8 +27,8 @@
 | CREATED_AT | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | 레코드 생성 시각 |
 
 - 이전 문서의 `LOCATION`(국가_도시) 컬럼은 구현에서 `COUNTRY` 로 바뀌었다
-- 엔티티는 `COUNTRY` 길이를 10 으로 선언한다 (스키마 100). `ddl-auto=validate` 는 길이를 비교하지 않아 동작에는 영향 없음
-- 이전 문서의 `USER_ID` INDEX 는 `schema.sql` 에 없다 (실제 DB 인덱스 여부는 확인하지 않음)
+- 엔티티의 `COUNTRY` 길이 선언이 10 이었으나 스키마·실제 DB 는 100 → 2026-10-19 엔티티를 100 으로 맞춤 (`ddl-auto=validate` 는 길이를 비교하지 않아 동작 영향 없었음)
+- 이전 문서의 `USER_ID` INDEX 는 `schema.sql`·실제 DB 모두 없다. DB 에서 user_id 로 조회하는 쿼리가 없고 사용자 이력 조회는 Redis 가 담당
 
 ---
 
@@ -36,12 +36,14 @@
 
 ML 이 점수를 낸 거래만 저장한다. 룰 차단·Fallback 거래는 판단한 모델이 없어 `MODEL_ID`(NOT NULL)를 채울 수 없으므로 저장하지 않는다.
 
+- `TRANSACTION_ID` 인덱스(`IX_FRAUD_RESULTS_TRANSACTION`)는 10/9 마이그레이션에 있었지만 2026-10-19 실제 DB 에 없었다 (원인 미확인) → `migration_2026-10-19_fraud_results_index.sql` 로 생성. 나머지 제약(PK, 외래키 2개, ROLE CHECK)은 실제 DB 에 있음을 확인
+
 | 컬럼명 | 타입 | 제약조건 | 설명 |
 |---|---|---|---|
 | ID | BIGSERIAL | PK, NOT NULL | |
 | TRANSACTION_ID | VARCHAR(36) | FK → TRANSACTIONS, NOT NULL, INDEX | |
 | MODEL_ID | BIGINT | FK → MODEL_METADATA, NOT NULL | 판단한 모델 (추론 서버 응답의 이름·버전·run_id 로 조회 또는 생성) |
-| RULE_TRIGGERED | VARCHAR(100) | | 현재 코드에서는 채우지 않음 (항상 NULL, 위 저장 범위 때문) |
+| RULE_TRIGGERED | VARCHAR(100) | | 현재 코드에서는 채우지 않음 (위 저장 범위 때문. 실제 DB 0 / 90,295행, 2026-10-19) |
 | ML_SCORE | DECIMAL(5,4) | | ML 모델 사기 확률 (0.0~1.0, 소수 4자리 반올림) |
 | FINAL_DECISION | VARCHAR(20) | NOT NULL | APPROVED / REVIEW / BLOCKED |
 | ROLE | VARCHAR(20) | NOT NULL, CHECK IN ('CHAMPION', 'CHALLENGER') | CHAMPION = 실제 판정 / CHALLENGER = Shadow (판정 미사용) |
@@ -57,8 +59,8 @@ ML 이 점수를 낸 거래만 저장한다. 룰 차단·Fallback 거래는 판�
 | MODEL_NAME | VARCHAR(100) | NOT NULL, UNIQUE(MODEL_NAME, VERSION) | 모델 이름 |
 | VERSION | VARCHAR(20) | NOT NULL, UNIQUE(MODEL_NAME, VERSION) | 추론 서버 응답의 모델 버전 |
 | MLFLOW_RUN_ID | VARCHAR(36) | NOT NULL | MLflow 실험 run ID |
-| DEPLOYED_AT | TIMESTAMPTZ | | 엔티티에 매핑되지 않아 현재 채우지 않음 |
-| IS_ACTIVE | BOOLEAN | NOT NULL, DEFAULT FALSE | 현재 코드는 항상 FALSE 로 저장 (아래 설계 결정 참고) |
+| DEPLOYED_AT | TIMESTAMPTZ | | 엔티티에 매핑되지 않아 현재 채우지 않음 (실제 DB 0 / 4행) |
+| IS_ACTIVE | BOOLEAN | NOT NULL, DEFAULT FALSE | 현재 코드는 항상 FALSE 로 저장 (실제 DB TRUE 0 / 4행, 아래 설계 결정 참고) |
 | CREATED_AT | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | |
 
 ---
