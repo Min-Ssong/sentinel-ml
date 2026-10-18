@@ -12,33 +12,9 @@
 
 > 부하 시험(k6)과 장애 주입 시험은 아직 하지 않았습니다. 무엇을 검증했고 무엇을 하지 않았는지는 [검증 범위](#검증-범위)에 따로 적었습니다.
 
-```mermaid
-flowchart TB
-  SIM[시뮬레이터] -->|key = userId| T[(Kafka transactions)]
-  T --> G1
-  T --> G2
-  subgraph RUN[운영 경로]
-    direction LR
-    G1[sentinel-group<br/>TransactionConsumer] --> R[Redis 룰]
-    G1 -->|Circuit Breaker + Fallback| C[챔피언 서빙 :8495]
-  end
-  subgraph SHADOW[Shadow 경로]
-    direction LR
-    G2[sentinel-shadow-group<br/>ShadowConsumer] -->|별도 Circuit Breaker| H[챌린저 서빙 :8496]
-  end
-  G1 -->|거래 + CHAMPION 결과 + 라벨| DB[(PostgreSQL)]
-  G2 -->|거래 행 대기 후 CHALLENGER 결과| DB
-  G1 -. 재시도 3회 실패 .-> DLQ[(dlq)]
-  subgraph LOOP[MLOps 루프]
-    direction LR
-    P[Prometheus] --> A[판정 DAG @hourly]
-    A -->|Recall 0.60 미만, 보류 없음| RT[드리프트 재학습 DAG]
-    RT -->|@challenger 등록| M[(MLflow Registry)]
-  end
-  RUN -. 지표 .-> P
-  SHADOW -. 지표 .-> P
-  M -. 사람이 비교 후 승격·롤백 .-> C
-```
+![Sentinel-ML 구성도](images/architecture.png)
+
+<sub>그림 원본: [diagrams/architecture.mmd](diagrams/architecture.mmd) (Mermaid)</sub>
 
 ---
 

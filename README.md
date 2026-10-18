@@ -16,6 +16,8 @@
 
 > 문제 해결 사례 4개(두 consumer group 의 외래키 경쟁, 반복된 운영 사고 차단, 실시간 지표의 데이터 누수, 시각 컬럼 시간대 전환)는 **[핵심 구현 포인트](docs/portfolio.md)** 에 정리했습니다.
 
+![Sentinel-ML 구성도](docs/images/architecture.png)
+
 **포트폴리오 핵심 차별점**
 - Transaction ID 기반 분산 추적 로깅 — 하나의 거래 흐름을 처음부터 끝까지 추적
 - Circuit Breaker + DLQ + Fallback — ML 서버 장애 시 룰 결과로 처리하도록 설계·구현 (장애 주입 시험과 P95 100ms SLA 는 k6 와 함께 검증 예정)

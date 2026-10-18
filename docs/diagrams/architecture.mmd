@@ -1,0 +1,21 @@
+flowchart LR
+  SIM[시뮬레이터] -->|key = userId| T[(Kafka<br/>transactions)]
+  T --> G1
+  T --> G2
+  subgraph RUN[운영 경로]
+    G1[sentinel-group<br/>TransactionConsumer] --> R[룰 판정<br/>Redis]
+    R --> C[챔피언 추론 :8495<br/>Circuit Breaker + Fallback]
+  end
+  subgraph SHADOW[Shadow 경로]
+    G2[sentinel-shadow-group<br/>ShadowConsumer] --> H[챌린저 추론 :8496<br/>별도 Circuit Breaker]
+  end
+  C -->|저장: 거래 + CHAMPION 결과 + 라벨| DB[(PostgreSQL)]
+  H -->|거래 행 대기 후 저장:<br/>CHALLENGER 결과| DB
+  G1 -. 재시도 3회 실패 .-> DLQ[(dlq)]
+  subgraph LOOP[MLOps 루프]
+    P[Prometheus<br/>API 지표] --> A[판정 DAG<br/>@hourly]
+    A -->|Recall 0.60 미만<br/>+ 보류 조건 없음| RT[드리프트<br/>재학습 DAG]
+    RT -->|@challenger 등록| M[(MLflow<br/>Registry)]
+  end
+  DB ~~~ P
+  M -. 사람이 비교 후<br/>승격·롤백 .-> C
