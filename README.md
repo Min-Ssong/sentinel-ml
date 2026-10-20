@@ -172,6 +172,8 @@ sentinel-ml/
 │           │   ├── retrain_dag.py            # sentinel_retrain: Time 3분할 누적 재학습 (수동)
 │           │   ├── sentinel_drift_monitor.py # 판정 DAG (@hourly): PSI 경보, Recall 판정, 보류 조건, 재학습 트리거
 │           │   └── retrain_drift_dag.py      # sentinel_retrain_drift: 드리프트 대응 재학습 → @challenger 등록 (판정 DAG가 호출)
+│           ├── tests/
+│           │   └── test_sentinel_drift_monitor.py # 판정 규칙(_hold_reasons, decide) 단위 테스트, Airflow 없이 실행
 │           ├── .env                   # git 제외 (FERNET_KEY)
 │           └── .env.example
 ```
