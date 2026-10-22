@@ -83,9 +83,9 @@
 - 네 번 모두 개인 시험 환경에서 사람이 낸 사고입니다
 - alias 변경 없이 드리프트 트래픽 직후 재개하는 경우는 여전히 막지 못합니다. `cooldown_hours=0` 잔류 + 실제 Recall 저하도 트리거됩니다 (대신 `[warn]` 이 남습니다)
 - 근본 원인(판정 창에 과거 트래픽이 섞이는 것)은 그대로입니다
-- 위 재현 확인은 Airflow·MLflow 를 대체한 로컬 단위 확인이고, 아직 저장소에 테스트로 넣지 않았습니다
+- 위 재현 확인은 판정 규칙 단위 테스트 63개로 저장소에 넣었습니다 ([test_sentinel_drift_monitor.py](../infra/docker/airflow/tests/test_sentinel_drift_monitor.py), 10/20). Airflow 데코레이터를 가짜로 바꿔 판정 함수만 검증하므로, Airflow 가 하위 태스크를 건너뛰는 동작은 검증 범위 밖입니다
 
-**증거**: [판정 DAG](../infra/docker/airflow/dags/sentinel_drift_monitor.py) · [promote_challenger.py](../ml/promote_challenger.py) · 커밋 [`b18321d`](https://github.com/Min-Ssong/sentinel-ml/commit/b18321d) (챌린저 등록·수동 승격) [`541d83f`](https://github.com/Min-Ssong/sentinel-ml/commit/541d83f) (고정/시간 보류) [`9a5d027`](https://github.com/Min-Ssong/sentinel-ml/commit/9a5d027) (alias 변경 보류)
+**증거**: [판정 DAG](../infra/docker/airflow/dags/sentinel_drift_monitor.py) · [판정 규칙 테스트](../infra/docker/airflow/tests/test_sentinel_drift_monitor.py) · [promote_challenger.py](../ml/promote_challenger.py) · 커밋 [`b18321d`](https://github.com/Min-Ssong/sentinel-ml/commit/b18321d) (챌린저 등록·수동 승격) [`541d83f`](https://github.com/Min-Ssong/sentinel-ml/commit/541d83f) (고정/시간 보류) [`9a5d027`](https://github.com/Min-Ssong/sentinel-ml/commit/9a5d027) (alias 변경 보류)
 
 ---
 
